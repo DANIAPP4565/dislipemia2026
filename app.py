@@ -4,9 +4,6 @@ import pandas as pd
 import io
 import base64
 import streamlit.components.v1 as components
-import sys
-import os
-import importlib.util
 from dataclasses import dataclass
 from typing import Optional, Dict, List
 from datetime import date, datetime
@@ -17,34 +14,29 @@ from datetime import date, datetime
 # Autor visible: Ricardo Daniel Olano, Especialista en Cardiología e Hipertensión Arterial
 # =========================================================
 
+# PDF: se intenta usar fpdf2 si está disponible.
+# Si Streamlit Cloud no instala fpdf2, la app usa un generador PDF interno sin dependencias.
 try:
     from fpdf import FPDF
-    import fpdf as _fpdf_module
     PDF_AVAILABLE = True
+    PDF_BACKEND = "fpdf2"
     PDF_ERROR = ""
-    PDF_VERSION = getattr(_fpdf_module, "__version__", "versión no informada")
 except Exception as e:
     FPDF = None
-    PDF_AVAILABLE = False
+    PDF_AVAILABLE = True
+    PDF_BACKEND = "interno_sin_dependencias"
     PDF_ERROR = repr(e)
-    PDF_VERSION = "no disponible"
 
 # Exportación Excel: usa openpyxl o xlsxwriter si están instalados.
 try:
     import openpyxl  # noqa: F401
     EXCEL_ENGINE = "openpyxl"
-    EXCEL_ERROR = ""
-    EXCEL_VERSION = getattr(openpyxl, "__version__", "versión no informada")
-except Exception as e_openpyxl:
+except Exception:
     try:
         import xlsxwriter  # noqa: F401
         EXCEL_ENGINE = "xlsxwriter"
-        EXCEL_ERROR = ""
-        EXCEL_VERSION = getattr(xlsxwriter, "__version__", "versión no informada")
-    except Exception as e_xlsxwriter:
+    except Exception:
         EXCEL_ENGINE = None
-        EXCEL_ERROR = f"openpyxl: {repr(e_openpyxl)} | xlsxwriter: {repr(e_xlsxwriter)}"
-        EXCEL_VERSION = "no disponible"
 
 st.set_page_config(
     page_title="LipidCare 2026 Pro",
@@ -56,38 +48,6 @@ st.set_page_config(
 AUTOR_APP = "Ricardo Daniel Olano, Especialista en Cardiología y en Hipertensión Arterial"
 APP_NAME = "LipidCare 2026 Pro"
 PREVENT_URL = "https://professional.heart.org/en/guidelines-and-statements/prevent-calculator"
-
-# =========================================================
-# Diagnóstico de dependencias
-# =========================================================
-def render_diagnostico_dependencias():
-    """Muestra el estado real del entorno donde corre Streamlit."""
-    with st.expander("Diagnóstico de entorno PDF / Excel", expanded=False):
-        st.write("Archivo ejecutado:", os.path.abspath(__file__) if "__file__" in globals() else "No disponible")
-        st.write("Python:", sys.version)
-        st.write("Ejecutable:", sys.executable)
-
-        st.markdown("**PDF**")
-        if PDF_AVAILABLE:
-            st.success(f"PDF disponible: módulo fpdf cargado correctamente. Versión: {PDF_VERSION}")
-        else:
-            st.error(f"PDF no disponible. Error real: {PDF_ERROR}")
-            st.info("En Streamlit Cloud, requirements.txt debe incluir: fpdf2")
-
-        st.markdown("**Excel**")
-        if EXCEL_ENGINE is not None:
-            st.success(f"Excel disponible: motor {EXCEL_ENGINE}. Versión: {EXCEL_VERSION}")
-        else:
-            st.error(f"Excel no disponible. Error real: {EXCEL_ERROR}")
-            st.info("En Streamlit Cloud, requirements.txt debe incluir: openpyxl y/o xlsxwriter")
-
-        st.markdown("**requirements.txt recomendado**")
-        st.code("""streamlit>=1.28
-pandas>=2.0
-fpdf2
-openpyxl
-xlsxwriter""", language="text")
-        st.caption("Si este diagnóstico dice que falta fpdf, Streamlit no está instalando/leyendo el requirements.txt correcto o la app está desplegada desde otra carpeta/rama.")
 
 # =========================================================
 # CSS profesional
@@ -178,6 +138,96 @@ def safe_text(txt: str) -> str:
     for a, b in replacements.items():
         txt = txt.replace(a, b)
     return txt
+
+
+
+def generar_pdf_simple_bytes(titulo: str, texto: str) -> bytes:
+    """
+    Generador PDF mínimo en Python puro, sin fpdf/reportlab.
+    Produce un PDF de texto multipágina compatible con lectores PDF.
+    Se usa como respaldo cuando Streamlit Cloud no instala fpdf2.
+    """
+    import textwrap
+
+    titulo = safe_text(titulo or APP_NAME)
+    texto = safe_text(texto or "")
+    lineas = [titulo, AUTOR_APP, f"Fecha: {date.today().isoformat()}", ""]
+    for bloque in texto.splitlines():
+        if not bloque.strip():
+            lineas.append("")
+        else:
+            lineas.extend(textwrap.wrap(bloque, width=92, replace_whitespace=False) or [""])
+
+    max_lineas_por_pagina = 46
+    paginas = [lineas[i:i + max_lineas_por_pagina] for i in range(0, len(lineas), max_lineas_por_pagina)] or [[""]]
+
+    def esc_pdf(s: str) -> str:
+        return s.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+    objetos = []
+    # 1 catalog, 2 pages, luego por pagina: page object + content object
+    kids_refs = []
+    for idx, pagina in enumerate(paginas):
+        page_obj_num = 3 + idx * 2
+        content_obj_num = page_obj_num + 1
+        kids_refs.append(f"{page_obj_num} 0 R")
+
+        content_lines = ["BT", "/F1 10 Tf", "50 800 Td", "14 TL"]
+        for j, linea in enumerate(pagina):
+            if j == 0:
+                content_lines.append("/F1 14 Tf")
+                content_lines.append(f"({esc_pdf(linea)}) Tj")
+                content_lines.append("/F1 10 Tf")
+            else:
+                content_lines.append("T*")
+                content_lines.append(f"({esc_pdf(linea)}) Tj")
+        content_lines.append("ET")
+        stream = "\n".join(content_lines).encode("latin-1", errors="replace")
+
+        page_obj = (
+            f"{page_obj_num} 0 obj\n"
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+            f"/Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> "
+            f"/Contents {content_obj_num} 0 R >>\n"
+            f"endobj\n"
+        ).encode("latin-1")
+        content_obj = (
+            f"{content_obj_num} 0 obj\n"
+            f"<< /Length {len(stream)} >>\n"
+            f"stream\n"
+        ).encode("latin-1") + stream + b"\nendstream\nendobj\n"
+        objetos.append((page_obj_num, page_obj))
+        objetos.append((content_obj_num, content_obj))
+
+    catalog = b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+    pages = (
+        f"2 0 obj\n<< /Type /Pages /Kids [{' '.join(kids_refs)}] /Count {len(paginas)} >>\nendobj\n"
+    ).encode("latin-1")
+
+    all_objs = [(1, catalog), (2, pages)] + sorted(objetos, key=lambda x: x[0])
+    pdf = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    offsets = {0: 0}
+    for num, obj in all_objs:
+        offsets[num] = len(pdf)
+        pdf.extend(obj)
+    xref_pos = len(pdf)
+    max_obj = max(offsets)
+    pdf.extend(f"xref\n0 {max_obj + 1}\n".encode("latin-1"))
+    pdf.extend(b"0000000000 65535 f \n")
+    for i in range(1, max_obj + 1):
+        pdf.extend(f"{offsets.get(i, 0):010d} 00000 n \n".encode("latin-1"))
+    pdf.extend(
+        f"trailer\n<< /Size {max_obj + 1} /Root 1 0 R >>\nstartxref\n{xref_pos}\n%%EOF\n".encode("latin-1")
+    )
+    return bytes(pdf)
+
+
+def diagnostico_dependencias_texto() -> str:
+    partes = [f"Motor PDF: {PDF_BACKEND}"]
+    if PDF_ERROR:
+        partes.append(f"fpdf2 no disponible: {PDF_ERROR}")
+    partes.append(f"Motor Excel: {EXCEL_ENGINE or 'no disponible'}")
+    return " | ".join(partes)
 
 
 def pct_reduccion(ldl_basal: float, ldl_actual: float) -> Optional[float]:
@@ -406,8 +456,16 @@ def pdf_color_rgb(color: str):
 
 
 def generar_pdf_semaforizado(p: Patient) -> bytes:
-    if not PDF_AVAILABLE:
-        raise RuntimeError("fpdf no esta instalado")
+    # Respaldo sin dependencias si fpdf2 no está instalado en Streamlit Cloud.
+    if FPDF is None:
+        texto = nota_clinica(p)
+        texto += "\n\nSEMAFORIZACION\n"
+        metas_tmp = metas_lipidicas(p)
+        for it in semaforo_items_data(p, metas_tmp):
+            texto += f"- {it['indicador']}: {it['valor']} | {it['interpretacion']} | Ref: {it['referencia']}\n"
+        texto += "\n\n" + diagnostico_dependencias_texto()
+        return generar_pdf_simple_bytes("Informe clinico semaforizado de dislipidemia", texto)
+
     perfil = determinar_perfil(p)
     metas = metas_lipidicas(p)
     estado = estado_meta(p)
@@ -749,8 +807,8 @@ Aviso: herramienta de soporte a la decision clinica; no sustituye juicio medico 
 
 
 def generar_pdf_bytes(texto: str) -> bytes:
-    if not PDF_AVAILABLE:
-        raise RuntimeError("fpdf no esta instalado")
+    if FPDF is None:
+        return generar_pdf_simple_bytes(APP_NAME, texto + "\n\n" + diagnostico_dependencias_texto())
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
@@ -886,7 +944,12 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-render_diagnostico_dependencias()
+with st.expander("Diagnóstico técnico PDF / Excel", expanded=False):
+    st.write(diagnostico_dependencias_texto())
+    if PDF_BACKEND == "interno_sin_dependencias":
+        st.warning("fpdf2 no fue detectado. La app usará PDF interno sin dependencias.")
+    if EXCEL_ENGINE is None:
+        st.error("Excel no disponible: revise openpyxl o xlsxwriter en requirements.txt")
 
 # =========================================================
 # Sidebar de navegación
@@ -1080,14 +1143,18 @@ if modo == "Evaluación clínica":
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.subheader("Exportar / guardar")
         st.download_button("Descargar nota clínica TXT", data=nota.encode("utf-8"), file_name="nota_lipidcare_2026.txt", mime="text/plain")
-        if PDF_AVAILABLE:
-            try:
-                pdf_bytes = generar_pdf_semaforizado(p)
-                st.download_button("Descargar informe PDF semaforizado", data=pdf_bytes, file_name="informe_lipidcare_2026_semaforizado.pdf", mime="application/pdf")
-            except Exception as e:
-                st.error(f"No se pudo generar PDF: {e}")
-        else:
-            st.error(f"PDF no disponible. Error real: {PDF_ERROR}. Verifique que requirements.txt incluya fpdf2.")
+        try:
+            pdf_bytes = generar_pdf_semaforizado(p)
+            st.download_button(
+                "Descargar informe PDF semaforizado",
+                data=pdf_bytes,
+                file_name="informe_lipidcare_2026_semaforizado.pdf",
+                mime="application/pdf"
+            )
+            if PDF_BACKEND == "interno_sin_dependencias":
+                st.info("PDF generado con motor interno sin dependencias. fpdf2 no está instalado en este entorno, pero la exportación PDF queda operativa.")
+        except Exception as e:
+            st.error(f"No se pudo generar PDF. Error real: {repr(e)}")
 
         row = make_row(p)
         df_row = pd.DataFrame([row])
@@ -1104,7 +1171,7 @@ if modo == "Evaluación clínica":
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         else:
-            st.error(f"Excel no disponible. Error real: {EXCEL_ERROR}. Verifique que requirements.txt incluya openpyxl.")
+            st.error("No está instalada la librería para Excel. Instalar con: pip install openpyxl")
 
         st.download_button(
             "Descargar registro actual CSV",
@@ -1204,7 +1271,7 @@ elif modo == "Historial por usuario":
                     st.session_state.historial_por_usuario[usuario_sel] = []
                     st.success("Historial del usuario seleccionado borrado.")
         else:
-            st.error(f"Excel no disponible. Error real: {EXCEL_ERROR}. Verifique que requirements.txt incluya openpyxl.")
+            st.error("No está instalada la librería para Excel. Instalar con: pip install openpyxl")
             st.download_button(
                 "Descargar CSV de este usuario",
                 data=df.to_csv(index=False).encode("utf-8-sig"),
@@ -1224,10 +1291,9 @@ Guardar este archivo como `app.py` y crear un archivo `requirements.txt` con:
 
 ```txt
 streamlit>=1.28
-pandas>=2.0
-fpdf2
+pandas
+fpdf
 openpyxl
-xlsxwriter
 ```
 
 Instalar dependencias:
