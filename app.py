@@ -4,6 +4,9 @@ import pandas as pd
 import io
 import base64
 import streamlit.components.v1 as components
+import sys
+import os
+import importlib.util
 from dataclasses import dataclass
 from typing import Optional, Dict, List
 from datetime import date, datetime
@@ -16,20 +19,32 @@ from datetime import date, datetime
 
 try:
     from fpdf import FPDF
+    import fpdf as _fpdf_module
     PDF_AVAILABLE = True
-except Exception:
+    PDF_ERROR = ""
+    PDF_VERSION = getattr(_fpdf_module, "__version__", "versión no informada")
+except Exception as e:
+    FPDF = None
     PDF_AVAILABLE = False
+    PDF_ERROR = repr(e)
+    PDF_VERSION = "no disponible"
 
 # Exportación Excel: usa openpyxl o xlsxwriter si están instalados.
 try:
     import openpyxl  # noqa: F401
     EXCEL_ENGINE = "openpyxl"
-except Exception:
+    EXCEL_ERROR = ""
+    EXCEL_VERSION = getattr(openpyxl, "__version__", "versión no informada")
+except Exception as e_openpyxl:
     try:
         import xlsxwriter  # noqa: F401
         EXCEL_ENGINE = "xlsxwriter"
-    except Exception:
+        EXCEL_ERROR = ""
+        EXCEL_VERSION = getattr(xlsxwriter, "__version__", "versión no informada")
+    except Exception as e_xlsxwriter:
         EXCEL_ENGINE = None
+        EXCEL_ERROR = f"openpyxl: {repr(e_openpyxl)} | xlsxwriter: {repr(e_xlsxwriter)}"
+        EXCEL_VERSION = "no disponible"
 
 st.set_page_config(
     page_title="LipidCare 2026 Pro",
@@ -41,6 +56,38 @@ st.set_page_config(
 AUTOR_APP = "Ricardo Daniel Olano, Especialista en Cardiología y en Hipertensión Arterial"
 APP_NAME = "LipidCare 2026 Pro"
 PREVENT_URL = "https://professional.heart.org/en/guidelines-and-statements/prevent-calculator"
+
+# =========================================================
+# Diagnóstico de dependencias
+# =========================================================
+def render_diagnostico_dependencias():
+    """Muestra el estado real del entorno donde corre Streamlit."""
+    with st.expander("Diagnóstico de entorno PDF / Excel", expanded=False):
+        st.write("Archivo ejecutado:", os.path.abspath(__file__) if "__file__" in globals() else "No disponible")
+        st.write("Python:", sys.version)
+        st.write("Ejecutable:", sys.executable)
+
+        st.markdown("**PDF**")
+        if PDF_AVAILABLE:
+            st.success(f"PDF disponible: módulo fpdf cargado correctamente. Versión: {PDF_VERSION}")
+        else:
+            st.error(f"PDF no disponible. Error real: {PDF_ERROR}")
+            st.info("En Streamlit Cloud, requirements.txt debe incluir: fpdf2")
+
+        st.markdown("**Excel**")
+        if EXCEL_ENGINE is not None:
+            st.success(f"Excel disponible: motor {EXCEL_ENGINE}. Versión: {EXCEL_VERSION}")
+        else:
+            st.error(f"Excel no disponible. Error real: {EXCEL_ERROR}")
+            st.info("En Streamlit Cloud, requirements.txt debe incluir: openpyxl y/o xlsxwriter")
+
+        st.markdown("**requirements.txt recomendado**")
+        st.code("""streamlit>=1.28
+pandas>=2.0
+fpdf2
+openpyxl
+xlsxwriter""", language="text")
+        st.caption("Si este diagnóstico dice que falta fpdf, Streamlit no está instalando/leyendo el requirements.txt correcto o la app está desplegada desde otra carpeta/rama.")
 
 # =========================================================
 # CSS profesional
@@ -839,6 +886,8 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
+render_diagnostico_dependencias()
+
 # =========================================================
 # Sidebar de navegación
 # =========================================================
@@ -1038,7 +1087,7 @@ if modo == "Evaluación clínica":
             except Exception as e:
                 st.error(f"No se pudo generar PDF: {e}")
         else:
-            st.warning("Para PDF instalar: pip install fpdf")
+            st.error(f"PDF no disponible. Error real: {PDF_ERROR}. Verifique que requirements.txt incluya fpdf2.")
 
         row = make_row(p)
         df_row = pd.DataFrame([row])
@@ -1055,7 +1104,7 @@ if modo == "Evaluación clínica":
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         else:
-            st.error("No está instalada la librería para Excel. Instalar con: pip install openpyxl")
+            st.error(f"Excel no disponible. Error real: {EXCEL_ERROR}. Verifique que requirements.txt incluya openpyxl.")
 
         st.download_button(
             "Descargar registro actual CSV",
@@ -1155,7 +1204,7 @@ elif modo == "Historial por usuario":
                     st.session_state.historial_por_usuario[usuario_sel] = []
                     st.success("Historial del usuario seleccionado borrado.")
         else:
-            st.error("No está instalada la librería para Excel. Instalar con: pip install openpyxl")
+            st.error(f"Excel no disponible. Error real: {EXCEL_ERROR}. Verifique que requirements.txt incluya openpyxl.")
             st.download_button(
                 "Descargar CSV de este usuario",
                 data=df.to_csv(index=False).encode("utf-8-sig"),
@@ -1175,9 +1224,10 @@ Guardar este archivo como `app.py` y crear un archivo `requirements.txt` con:
 
 ```txt
 streamlit>=1.28
-pandas
-fpdf
+pandas>=2.0
+fpdf2
 openpyxl
+xlsxwriter
 ```
 
 Instalar dependencias:
