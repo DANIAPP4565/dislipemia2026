@@ -14,22 +14,33 @@ from datetime import date, datetime
 # Autor visible: Ricardo Daniel Olano, Especialista en Cardiología e Hipertensión Arterial
 # =========================================================
 
+# =========================================================
+# Dependencias opcionales: PDF y Excel
+# En Streamlit Cloud deben estar en requirements.txt:
+# streamlit, pandas, fpdf2, openpyxl, xlsxwriter
+# =========================================================
+PDF_AVAILABLE = False
+PDF_ERROR = ""
 try:
     from fpdf import FPDF
     PDF_AVAILABLE = True
-except Exception:
+except Exception as e:
     PDF_AVAILABLE = False
+    PDF_ERROR = repr(e)
 
 # Exportación Excel: usa openpyxl o xlsxwriter si están instalados.
+EXCEL_ENGINE = None
+EXCEL_ERROR = ""
 try:
     import openpyxl  # noqa: F401
     EXCEL_ENGINE = "openpyxl"
-except Exception:
+except Exception as e1:
     try:
         import xlsxwriter  # noqa: F401
         EXCEL_ENGINE = "xlsxwriter"
-    except Exception:
+    except Exception as e2:
         EXCEL_ENGINE = None
+        EXCEL_ERROR = f"openpyxl: {repr(e1)} | xlsxwriter: {repr(e2)}"
 
 st.set_page_config(
     page_title="LipidCare 2026 Pro",
@@ -1038,7 +1049,7 @@ if modo == "Evaluación clínica":
             except Exception as e:
                 st.error(f"No se pudo generar PDF: {e}")
         else:
-            st.warning("Para PDF instalar: pip install fpdf")
+            st.error(f"PDF no disponible. Error real: {PDF_ERROR}. Verifique que requirements.txt incluya fpdf2.")
 
         row = make_row(p)
         df_row = pd.DataFrame([row])
@@ -1055,7 +1066,7 @@ if modo == "Evaluación clínica":
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         else:
-            st.error("No está instalada la librería para Excel. Instalar con: pip install openpyxl")
+            st.error(f"Excel no disponible. Error real: {EXCEL_ERROR}. Verifique que requirements.txt incluya openpyxl y xlsxwriter.")
 
         st.download_button(
             "Descargar registro actual CSV",
@@ -1155,7 +1166,7 @@ elif modo == "Historial por usuario":
                     st.session_state.historial_por_usuario[usuario_sel] = []
                     st.success("Historial del usuario seleccionado borrado.")
         else:
-            st.error("No está instalada la librería para Excel. Instalar con: pip install openpyxl")
+            st.error(f"Excel no disponible. Error real: {EXCEL_ERROR}. Verifique que requirements.txt incluya openpyxl y xlsxwriter.")
             st.download_button(
                 "Descargar CSV de este usuario",
                 data=df.to_csv(index=False).encode("utf-8-sig"),
@@ -1175,15 +1186,17 @@ Guardar este archivo como `app.py` y crear un archivo `requirements.txt` con:
 
 ```txt
 streamlit>=1.28
-pandas
-fpdf
-openpyxl
+pandas>=2.0
+fpdf2>=2.7.9
+openpyxl>=3.1.2
+xlsxwriter>=3.1.9
 ```
 
 Instalar dependencias:
 
 ```bash
-pip install -r requirements.txt
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 ```
 
 Ejecutar:
