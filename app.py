@@ -336,15 +336,16 @@ def determinar_perfil(p: Patient) -> Dict[str, str]:
 
 def metas_lipidicas(p: Patient) -> Dict[str, str]:
     info = determinar_perfil(p)
-    if info["perfil"] == "Prevencion secundaria" and "Muy alto" in info["riesgo"]:
+    riesgo_lower = info["riesgo"].lower()
+    if info["perfil"] == "Prevencion secundaria" and "muy alto" in riesgo_lower:
         return {"ldl":"<55 mg/dL", "no_hdl":"<85 mg/dL", "reduccion":">=50%"}
     if info["perfil"] == "Prevencion secundaria":
         return {"ldl":"<70 mg/dL", "no_hdl":"<100 mg/dL", "reduccion":">=50%"}
-    if "Alto" in info["riesgo"]:
+    if "alto" in riesgo_lower:
         return {"ldl":"<70 mg/dL", "no_hdl":"<100 mg/dL", "reduccion":">=50%"}
-    if "Intermedio" in info["riesgo"]:
+    if "intermedio" in riesgo_lower:
         return {"ldl":"<100 mg/dL", "no_hdl":"<130 mg/dL", "reduccion":"30-49% o mayor si potenciadores"}
-    if "limitrofe" in info["riesgo"].lower():
+    if "limitrofe" in riesgo_lower:
         return {"ldl":"<116 mg/dL", "no_hdl":"<145 mg/dL", "reduccion":"segun potenciadores/CAC"}
     return {"ldl":"<116 mg/dL", "no_hdl":"<145 mg/dL", "reduccion":"estilo de vida"}
 
