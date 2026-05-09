@@ -887,6 +887,104 @@ class PDFBuilder:
         self._text_raw(bar_x, bar_y - 22, "Riesgo PREVENT 10 anos: <5% bajo / 5-7.5% limitrofe / 7.5-20% intermedio / >=20% alto", 8, (0.30, 0.32, 0.36))
         self.y = bar_y - 28
 
+    def line_chart(self, points: List[Tuple[str, float]], meta: Optional[float] = None,
+                   title: str = "Evolucion temporal del LDL-C", y_label: str = "LDL-C (mg/dL)",
+                   secundaria: Optional[List[Tuple[str, float]]] = None,
+                   secundaria_label: str = "LDL basal"):
+        """Dibuja un grafico de lineas con marcadores y opcional linea de meta."""
+        self.ensure_space(220)
+        self.y -= 24
+        chart_x = self.margin_x + 50
+        chart_h = 150
+        chart_y = self.y - chart_h
+        chart_w = self.width - 2 * self.margin_x - 60
+        # Titulo
+        self._text_raw(self.margin_x, chart_y + chart_h + 18, title, 11, (0.05, 0.05, 0.05), bold=True)
+        # Fondo
+        self._rect_raw(chart_x, chart_y, chart_w, chart_h, (1, 1, 1), (0.70, 0.72, 0.78), 0.5)
+        if not points:
+            self._text_raw(chart_x + chart_w / 2 - 50, chart_y + chart_h / 2, "Sin datos suficientes", 10, (0.40, 0.42, 0.46))
+            self.y = chart_y - 18
+            return
+        # Escala
+        all_vals = [v for _, v in points]
+        if secundaria:
+            all_vals += [v for _, v in secundaria]
+        if meta is not None:
+            all_vals.append(meta)
+        y_max = max(all_vals) * 1.20 if all_vals else 200
+        y_min = 0
+        y_range = max(y_max - y_min, 1)
+        # Gridlines y ticks Y
+        for frac in [0, 0.25, 0.5, 0.75, 1.0]:
+            v = y_min + frac * y_range
+            ty = chart_y + frac * chart_h
+            self._text_raw(chart_x - 38, ty - 3, f"{v:.0f}", 7, (0.40, 0.42, 0.46))
+            self.current.append(f"0.88 0.89 0.92 RG 0.3 w {chart_x:.2f} {ty:.2f} m {chart_x + chart_w:.2f} {ty:.2f} l S")
+        # Linea de meta (segmentos)
+        if meta is not None:
+            my = chart_y + ((meta - y_min) / y_range) * chart_h
+            seg, gap, x = 7, 4, chart_x
+            r, g, b = COLOR_DARK_PDF["green"]
+            while x < chart_x + chart_w:
+                self._rect_raw(x, my - 0.6, min(seg, chart_x + chart_w - x), 1.2, (r, g, b))
+                x += seg + gap
+            self._text_raw(chart_x + chart_w - 70, my + 3, f"Meta {meta:.0f} mg/dL", 7, (r, g, b), bold=True)
+        # Posiciones X
+        n = len(points)
+        if n == 1:
+            x_positions = [chart_x + chart_w / 2]
+        else:
+            x_positions = [chart_x + i * (chart_w / (n - 1)) for i in range(n)]
+        # Coordenadas
+        coords_main = [(x_positions[i], chart_y + ((points[i][1] - y_min) / y_range) * chart_h) for i in range(n)]
+        # Linea principal (LDL actual)
+        if len(coords_main) > 1:
+            r, g, b = COLOR_DARK_PDF["blue"]
+            path = f"{r:.3f} {g:.3f} {b:.3f} RG 1.6 w {coords_main[0][0]:.2f} {coords_main[0][1]:.2f} m"
+            for cx, cy in coords_main[1:]:
+                path += f" {cx:.2f} {cy:.2f} l"
+            path += " S"
+            self.current.append(path)
+        # Serie secundaria (LDL basal historico)
+        if secundaria and len(secundaria) == n:
+            coords_sec = [(x_positions[i], chart_y + ((secundaria[i][1] - y_min) / y_range) * chart_h) for i in range(n)]
+            if len(coords_sec) > 1:
+                r, g, b = (0.55, 0.55, 0.60)
+                path = f"{r:.3f} {g:.3f} {b:.3f} RG 1.0 w {coords_sec[0][0]:.2f} {coords_sec[0][1]:.2f} m"
+                for cx, cy in coords_sec[1:]:
+                    path += f" {cx:.2f} {cy:.2f} l"
+                path += " S"
+                self.current.append(path)
+            for cx, cy in coords_sec:
+                self._rect_raw(cx - 2.5, cy - 2.5, 5, 5, (0.55, 0.55, 0.60))
+        # Marcadores principales
+        rb, gb, bb = COLOR_DARK_PDF["blue"]
+        for i, (cx, cy) in enumerate(coords_main):
+            self._rect_raw(cx - 4, cy - 4, 8, 8, (rb, gb, bb))
+            self._rect_raw(cx - 2, cy - 2, 4, 4, (1, 1, 1))
+            # Valor encima del marcador
+            self._text_raw(cx - 10, cy + 7, f"{points[i][1]:.0f}", 7, (rb, gb, bb), bold=True)
+        # Etiquetas X (fechas)
+        for i, (label, _) in enumerate(points):
+            cx = x_positions[i]
+            short = label[:10]
+            self._text_raw(cx - 22, chart_y - 12, short, 6, (0.30, 0.32, 0.36))
+        # Leyenda
+        leg_y = chart_y + chart_h + 4
+        # primary
+        self._rect_raw(chart_x + 5, leg_y, 12, 3, COLOR_DARK_PDF["blue"])
+        self._text_raw(chart_x + 22, leg_y - 2, "LDL-C actual", 7, (0.20, 0.22, 0.26))
+        if secundaria:
+            self._rect_raw(chart_x + 90, leg_y, 12, 3, (0.55, 0.55, 0.60))
+            self._text_raw(chart_x + 107, leg_y - 2, secundaria_label, 7, (0.20, 0.22, 0.26))
+        if meta is not None:
+            self._rect_raw(chart_x + 170, leg_y, 12, 3, COLOR_DARK_PDF["green"])
+            self._text_raw(chart_x + 187, leg_y - 2, f"Meta {meta:.0f}", 7, COLOR_DARK_PDF["green"], bold=True)
+        # Eje X label
+        self._text_raw(chart_x + chart_w / 2 - 30, chart_y - 24, "Fecha de evaluacion", 7, (0.30, 0.32, 0.36))
+        self.y = chart_y - 32
+
     def build(self) -> bytes:
         if self.current:
             self.pages.append(self.current)
@@ -1066,6 +1164,161 @@ def pdf_informe_paciente(p: Patient) -> bytes:
     pdf.heading("Aviso")
     pdf.text("Este informe simplificado no reemplaza la explicacion personalizada de su medico.", size=8, color=(0.40, 0.42, 0.45))
 
+    return pdf.build()
+
+# =========================================================
+# Evolucion temporal del paciente
+# =========================================================
+def _patient_key(registro: dict) -> str:
+    """Clave para agrupar evaluaciones del mismo paciente."""
+    dni = (registro.get("dni") or "").strip()
+    nombre = (registro.get("paciente") or "").strip()
+    return f"DNI:{dni}" if dni else f"NOM:{nombre.lower()}"
+
+def listar_pacientes_unicos(username: str) -> List[Dict]:
+    """Devuelve lista de pacientes unicos del usuario con cantidad de evaluaciones."""
+    historial = load_historial().get(username, [])
+    grupos: Dict[str, Dict] = {}
+    for r in historial:
+        k = _patient_key(r)
+        if not k or k in ("DNI:", "NOM:"):
+            continue
+        if k not in grupos:
+            grupos[k] = {
+                "key": k,
+                "dni": r.get("dni") or "",
+                "paciente": r.get("paciente") or "",
+                "evaluaciones": []
+            }
+        grupos[k]["evaluaciones"].append(r)
+    out = []
+    for k, g in grupos.items():
+        g["evaluaciones"].sort(key=lambda x: x.get("fecha", ""))
+        g["n"] = len(g["evaluaciones"])
+        g["primera"] = g["evaluaciones"][0].get("fecha", "")
+        g["ultima"] = g["evaluaciones"][-1].get("fecha", "")
+        ldls = [e.get("ldl_actual") for e in g["evaluaciones"] if isinstance(e.get("ldl_actual"), (int, float))]
+        g["ldl_inicial"] = ldls[0] if ldls else None
+        g["ldl_ultimo"] = ldls[-1] if ldls else None
+        if g["ldl_inicial"] and g["ldl_ultimo"] and g["ldl_inicial"] > 0:
+            g["delta_pct"] = round((g["ldl_inicial"] - g["ldl_ultimo"]) / g["ldl_inicial"] * 100, 1)
+        else:
+            g["delta_pct"] = None
+        out.append(g)
+    out.sort(key=lambda x: x["paciente"].lower() or x["dni"])
+    return out
+
+def evolucion_dataframe(evaluaciones: List[dict]) -> pd.DataFrame:
+    if not evaluaciones:
+        return pd.DataFrame()
+    df = pd.DataFrame(evaluaciones)
+    if "fecha" in df.columns:
+        df["fecha"] = pd.to_datetime(df["fecha"], errors="coerce")
+        df = df.sort_values("fecha").reset_index(drop=True)
+    cols_pref = ["fecha", "ldl_actual", "ldl_basal", "no_hdl", "tg", "hdl",
+                 "estado_meta", "meta_ldl", "reduccion_ldl", "intensidad_recomendada",
+                 "droga_recomendada"]
+    cols_present = [c for c in cols_pref if c in df.columns]
+    other = [c for c in df.columns if c not in cols_present]
+    return df[cols_present + other]
+
+def pdf_evolucion_paciente(username: str, paciente_key: str) -> Optional[bytes]:
+    """Genera PDF con grafico de evolucion temporal de un paciente."""
+    pacientes = listar_pacientes_unicos(username)
+    g = next((x for x in pacientes if x["key"] == paciente_key), None)
+    if g is None:
+        return None
+    evals = g["evaluaciones"]
+    if not evals:
+        return None
+    pdf = PDFBuilder(title=f"{APP_NAME} - Evolucion del paciente")
+
+    pdf.heading("Datos del paciente")
+    pdf.text(f"Paciente: {g['paciente'] or 'No informado'}    DNI/ID: {g['dni'] or 'No informado'}")
+    pdf.text(f"Cantidad de evaluaciones registradas: {g['n']}")
+    pdf.text(f"Primera evaluacion: {str(g['primera'])[:10]}    Ultima evaluacion: {str(g['ultima'])[:10]}")
+    if g["delta_pct"] is not None:
+        signo = "reduccion" if g["delta_pct"] >= 0 else "aumento"
+        pdf.text(f"Cambio LDL-C desde primera a ultima evaluacion: {abs(g['delta_pct']):.1f}% ({signo}) - de {g['ldl_inicial']:.0f} a {g['ldl_ultimo']:.0f} mg/dL.", size=11)
+
+    # Grafico de evolucion
+    pdf.heading("Evolucion temporal del LDL-C")
+    puntos = []
+    puntos_basal = []
+    for e in evals:
+        f = str(e.get("fecha", ""))[:10]
+        ldl_a = e.get("ldl_actual")
+        ldl_b = e.get("ldl_basal")
+        if isinstance(ldl_a, (int, float)):
+            puntos.append((f, float(ldl_a)))
+            puntos_basal.append((f, float(ldl_b) if isinstance(ldl_b, (int, float)) else float(ldl_a)))
+    # Meta a partir de la ultima evaluacion
+    meta_str = evals[-1].get("meta_ldl", "")
+    meta_val = None
+    for token in ["55", "70", "100", "116"]:
+        if token in str(meta_str):
+            meta_val = float(token); break
+    pdf.line_chart(puntos, meta=meta_val, title="LDL-C a lo largo del tiempo",
+                   secundaria=puntos_basal if any(b[1] != p[1] for b, p in zip(puntos_basal, puntos)) else None,
+                   secundaria_label="LDL basal pre-tto")
+
+    # Tabla resumen de evaluaciones
+    pdf.heading("Tabla de evaluaciones")
+    headers = ["Fecha", "LDL act", "LDL bas", "No-HDL", "TG", "Estado", "Meta"]
+    pdf.ensure_space(20)
+    pdf.y -= 14
+    col_w = [70, 55, 55, 55, 45, 75, 60]
+    cx = pdf.margin_x
+    # cabecera
+    pdf._rect_raw(cx, pdf.y, sum(col_w), 16, COLOR_DARK_PDF["blue"])
+    for i, h in enumerate(headers):
+        pdf._text_raw(cx + 4, pdf.y + 4, h, 8, (1, 1, 1), bold=True)
+        cx += col_w[i]
+    pdf.y -= 4
+    # filas
+    for idx, e in enumerate(evals):
+        pdf.ensure_space(14)
+        pdf.y -= 14
+        cx = pdf.margin_x
+        bg = (0.97, 0.98, 0.99) if idx % 2 == 0 else (1, 1, 1)
+        pdf._rect_raw(cx, pdf.y, sum(col_w), 14, bg, (0.85, 0.87, 0.90), 0.3)
+        ldl_act = e.get("ldl_actual")
+        ldl_bas = e.get("ldl_basal")
+        no_hdl = e.get("no_hdl")
+        tg = e.get("tg")
+        estado = str(e.get("estado_meta", ""))[:14]
+        meta = str(e.get("meta_ldl", ""))[:10]
+        valores = [
+            str(e.get("fecha", ""))[:10],
+            f"{ldl_act:.0f}" if isinstance(ldl_act, (int, float)) else "-",
+            f"{ldl_bas:.0f}" if isinstance(ldl_bas, (int, float)) else "-",
+            f"{no_hdl:.0f}" if isinstance(no_hdl, (int, float)) else "-",
+            f"{tg:.0f}" if isinstance(tg, (int, float)) else "-",
+            estado, meta
+        ]
+        for i, v in enumerate(valores):
+            color = (0.05, 0.05, 0.05)
+            if i == 5:  # estado
+                if "En meta" in v: color = COLOR_DARK_PDF["green"]
+                elif "Cerca" in v: color = COLOR_DARK_PDF["orange"]
+                elif "Fuera" in v: color = COLOR_DARK_PDF["red"]
+            pdf._text_raw(cx + 4, pdf.y + 4, v, 8, color)
+            cx += col_w[i]
+
+    # Ultima decision
+    ultima = evals[-1]
+    pdf.heading("Ultima recomendacion farmacologica registrada")
+    intensidad = ultima.get("intensidad_recomendada", "No registrada")
+    droga = ultima.get("droga_recomendada", "No registrada")
+    requiere = "SI" if ultima.get("requiere_farmaco") else "NO"
+    pdf.text(f"Requiere farmaco: {requiere}   Intensidad: {intensidad}")
+    pdf.text(f"Droga sugerida: {droga}", size=10)
+    just = ultima.get("justificacion_decision", "")
+    if just:
+        pdf.text(f"Justificacion: {just}", size=9)
+
+    pdf.heading("Aviso")
+    pdf.text("Herramienta de soporte clinico. La interpretacion final corresponde al medico tratante.", size=8, color=(0.40, 0.42, 0.45))
     return pdf.build()
 
 # =========================================================
@@ -1521,6 +1774,140 @@ def render_historial_propio():
         st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
+def render_evolucion_paciente():
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.subheader("Evolucion temporal del paciente")
+    st.caption("Seleccione un paciente para ver la evolucion del LDL-C y demas indicadores a lo largo del tiempo. Cada vez que guarda una nueva evaluacion del mismo paciente (mismo DNI), se agrega un punto a la serie.")
+    pacientes = listar_pacientes_unicos(st.session_state.username)
+    if not pacientes:
+        st.info("Aun no tiene pacientes guardados. Guarde evaluaciones desde 'Evaluacion clinica'.")
+        st.markdown('</div>', unsafe_allow_html=True)
+        return
+    # Resumen de pacientes
+    df_resumen = pd.DataFrame([{
+        "Paciente": p["paciente"] or "(sin nombre)",
+        "DNI": p["dni"] or "(sin DNI)",
+        "Evaluaciones": p["n"],
+        "Primera": str(p["primera"])[:10],
+        "Ultima": str(p["ultima"])[:10],
+        "LDL inicial": p["ldl_inicial"],
+        "LDL ultimo": p["ldl_ultimo"],
+        "Cambio %": p["delta_pct"]
+    } for p in pacientes])
+    st.markdown("**Pacientes registrados:**")
+    st.dataframe(df_resumen, use_container_width=True)
+
+    # Selector
+    opciones_disp = [f"{p['paciente'] or '(sin nombre)'} - DNI {p['dni'] or '-'} - {p['n']} eval." for p in pacientes]
+    sel_idx = st.selectbox("Seleccione paciente para ver su evolucion:",
+                           options=list(range(len(pacientes))),
+                           format_func=lambda i: opciones_disp[i])
+    g = pacientes[sel_idx]
+    evals = g["evaluaciones"]
+    df = evolucion_dataframe(evals)
+
+    # Cards resumen
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        resumen_card("Evaluaciones", str(g["n"]), "Serie temporal", "blue", "Total guardadas")
+    with c2:
+        if g["ldl_inicial"] is not None:
+            resumen_card("LDL-C inicial", f"{g['ldl_inicial']:.0f} mg/dL", "Primer registro", "gray", str(g["primera"])[:10])
+    with c3:
+        if g["ldl_ultimo"] is not None:
+            color = "green" if (g["delta_pct"] or 0) >= 30 else "orange" if (g["delta_pct"] or 0) > 0 else "red"
+            resumen_card("LDL-C ultimo", f"{g['ldl_ultimo']:.0f} mg/dL", "Ultimo registro", color, str(g["ultima"])[:10])
+    with c4:
+        if g["delta_pct"] is not None:
+            color = "green" if g["delta_pct"] >= 50 else "orange" if g["delta_pct"] >= 30 else "red" if g["delta_pct"] >= 0 else "red"
+            signo = "Reduccion" if g["delta_pct"] >= 0 else "Aumento"
+            resumen_card("Cambio LDL-C", f"{abs(g['delta_pct']):.1f}%", signo, color, "Inicial vs ultimo")
+
+    # Grafico de evolucion con altair (incluido en streamlit)
+    if g["n"] >= 1:
+        try:
+            import altair as alt
+            df_chart = df.copy()
+            if "fecha" in df_chart.columns:
+                df_chart["fecha"] = pd.to_datetime(df_chart["fecha"], errors="coerce")
+            # Series para grafico
+            series_map = {"LDL actual": "ldl_actual", "LDL basal": "ldl_basal",
+                          "No-HDL-C": "no_hdl", "Trigliceridos": "tg", "HDL-C": "hdl"}
+            seleccion = st.multiselect("Series a graficar:",
+                                        options=list(series_map.keys()),
+                                        default=["LDL actual", "LDL basal"])
+            cols_keep = ["fecha"] + [series_map[k] for k in seleccion if series_map[k] in df_chart.columns]
+            if "fecha" in cols_keep and len(cols_keep) > 1:
+                long_df = df_chart[cols_keep].melt("fecha", var_name="Indicador", value_name="mg/dL")
+                # remap nombres
+                inv_map = {v: k for k, v in series_map.items()}
+                long_df["Indicador"] = long_df["Indicador"].map(inv_map).fillna(long_df["Indicador"])
+                # Meta horizontal: tomar de la ultima evaluacion
+                meta_str = evals[-1].get("meta_ldl", "")
+                meta_val = None
+                for token in ["55", "70", "100", "116"]:
+                    if token in str(meta_str):
+                        meta_val = float(token); break
+                base = alt.Chart(long_df).mark_line(point=alt.OverlayMarkDef(size=80, filled=True)).encode(
+                    x=alt.X("fecha:T", title="Fecha de evaluacion"),
+                    y=alt.Y("mg/dL:Q", title="mg/dL"),
+                    color=alt.Color("Indicador:N",
+                                    scale=alt.Scale(domain=list(series_map.keys()),
+                                                     range=["#0B4F8A", "#94A3B8", "#7C3AED", "#EA580C", "#16A34A"])),
+                    tooltip=["fecha:T", "Indicador:N", "mg/dL:Q"]
+                ).properties(height=380, title=f"Evolucion temporal - {g['paciente']}")
+                if meta_val is not None and "LDL actual" in seleccion:
+                    rule = alt.Chart(pd.DataFrame({"y": [meta_val]})).mark_rule(
+                        color="#16A34A", strokeDash=[6, 4], size=2
+                    ).encode(y="y:Q")
+                    text = alt.Chart(pd.DataFrame({"y": [meta_val], "label": [f"Meta LDL <{meta_val:.0f}"]})).mark_text(
+                        align="left", dx=8, dy=-6, color="#16A34A", fontSize=11, fontWeight="bold"
+                    ).encode(y="y:Q", text="label:N")
+                    chart = (base + rule + text).resolve_scale(y="shared")
+                else:
+                    chart = base
+                st.altair_chart(chart, use_container_width=True)
+            else:
+                st.info("Seleccione al menos una serie ademas de la fecha.")
+        except ImportError:
+            # fallback simple
+            cols_show = [c for c in ["ldl_actual", "ldl_basal", "no_hdl", "tg", "hdl"] if c in df.columns]
+            if "fecha" in df.columns and cols_show:
+                tmp = df[["fecha"] + cols_show].copy()
+                tmp = tmp.set_index("fecha")
+                st.line_chart(tmp)
+
+    # Tabla
+    st.markdown("**Detalle de evaluaciones:**")
+    st.dataframe(df, use_container_width=True)
+
+    # Descargas
+    cols_dl = st.columns(3)
+    with cols_dl[0]:
+        try:
+            pdf_bytes = pdf_evolucion_paciente(st.session_state.username, g["key"])
+            if pdf_bytes:
+                fname = f"evolucion_{(g['dni'] or g['paciente'] or 'paciente').replace(' ','_')[:20]}.pdf"
+                st.download_button("Descargar PDF de evolucion (con grafico)",
+                                   data=pdf_bytes, file_name=fname, mime="application/pdf")
+        except Exception as e:
+            st.error(f"Error generando PDF: {e}")
+    with cols_dl[1]:
+        if EXCEL_ENGINE is not None:
+            try:
+                xlsx_b = excel_bytes_from_df(df, "Evolucion")
+                st.download_button("Descargar evolucion Excel",
+                                   data=xlsx_b,
+                                   file_name=f"evolucion_{(g['dni'] or 'paciente')}.xlsx",
+                                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            except Exception as e:
+                st.error(f"Excel: {e}")
+    with cols_dl[2]:
+        st.download_button("Descargar evolucion CSV",
+                           data=df.to_csv(index=False).encode("utf-8-sig"),
+                           file_name=f"evolucion_{(g['dni'] or 'paciente')}.csv", mime="text/csv")
+    st.markdown('</div>', unsafe_allow_html=True)
+
 def render_admin_global():
     if st.session_state.user_data.get("rol") != "admin":
         st.error("Acceso restringido. Esta seccion es solo para administradores.")
@@ -1642,7 +2029,7 @@ else:
             st.caption(f"Detalle Excel: {EXCEL_IMPORT_ERROR}")
         st.write(f"Carpeta de datos: `{DATA_DIR.resolve()}`")
 
-    opciones = ["Evaluacion clinica", "Mi historial", "Calculadora PREVENT", "Ayuda"]
+    opciones = ["Evaluacion clinica", "Mi historial", "Evolucion del paciente", "Calculadora PREVENT", "Ayuda"]
     if st.session_state.user_data.get("rol") == "admin":
         opciones.append("Admin: todos los usuarios")
     modo = st.sidebar.radio("Modulo", opciones)
@@ -1651,6 +2038,8 @@ else:
         render_evaluacion()
     elif modo == "Mi historial":
         render_historial_propio()
+    elif modo == "Evolucion del paciente":
+        render_evolucion_paciente()
     elif modo == "Calculadora PREVENT":
         render_calculadora_prevent()
     elif modo == "Admin: todos los usuarios":
