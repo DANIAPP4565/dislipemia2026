@@ -250,7 +250,9 @@ class Patient:
     diabetes: bool
     ckd: bool
     egfr: Optional[float]
+    presion_sistolica: float
     hta: bool
+    tratamiento_hta: bool
     tabaquismo: bool
     inflamacion_cronica: bool
     antecedente_familiar: bool
@@ -1039,12 +1041,13 @@ def pdf_informe_medico(p: Patient) -> bytes:
     # Datos paciente
     pdf.heading("Datos del paciente")
     pdf.text(f"Paciente: {p.paciente or 'No informado'}    DNI/ID: {p.dni or 'No informado'}")
-    pdf.text(f"Edad: {p.edad} anos    Sexo: {p.sexo}")
+    pdf.text(f"Edad: {p.edad} anos    Sexo: {p.sexo}    PAS: {p.presion_sistolica:.0f} mmHg")
     pdf.text(f"Medico: {p.medico or 'No informado'}    Matricula: {p.matricula or 'No informada'}")
 
     # Perfil
     pdf.heading("Perfil de riesgo")
     pdf.text(f"{info['perfil']} - {info['riesgo']}", size=11)
+    pdf.text(f"Variables PREVENT sincronizadas: edad {p.edad} anos, sexo {p.sexo}, colesterol total {p.colesterol_total:.0f} mg/dL, HDL {p.hdl:.0f} mg/dL, PAS {p.presion_sistolica:.0f} mmHg, diabetes {'si' if p.diabetes else 'no'}, tabaquismo {'si' if p.tabaquismo else 'no'}, eGFR {p.egfr if p.egfr is not None else 'no informado'}.", size=9)
     if p.prevent_10 is not None:
         pdf.text(f"PREVENT 10 anos: {p.prevent_10}% ({clasificar_prevent(p.prevent_10)})")
     if p.prevent_30 is not None:
@@ -1341,6 +1344,7 @@ Matricula: {p.matricula or 'No informada'}
 
 PERFIL DE RIESGO
 {perfil['perfil']} - {perfil['riesgo']}.
+Presion sistolica para PREVENT: {p.presion_sistolica:.0f} mmHg.
 Riesgo PREVENT 10 anos: {p.prevent_10 if p.prevent_10 is not None else 'No aplica/no informado'}% ({clasificar_prevent(p.prevent_10)}).
 Riesgo PREVENT 30 anos: {p.prevent_30 if p.prevent_30 is not None else 'No informado'}%.
 
@@ -1398,13 +1402,14 @@ def make_row(p: Patient, decision: dict) -> Dict[str, object]:
         "paciente": p.paciente, "dni": p.dni, "medico": p.medico, "matricula": p.matricula,
         "edad": p.edad, "sexo": p.sexo,
         "perfil": perfil["perfil"], "riesgo": perfil["riesgo"],
+        "presion_sistolica_prevent": p.presion_sistolica,
         "prevent_10": p.prevent_10, "prevent_30": p.prevent_30,
         "colesterol_total": p.colesterol_total, "hdl": p.hdl,
         "ldl_basal": p.ldl_basal, "ldl_actual": p.ldl_actual,
         "reduccion_ldl": estado["reduccion"], "meta_ldl": metas["ldl"],
         "estado_meta": estado["texto"],
         "no_hdl": p.no_hdl, "tg": p.tg, "lpa": p.lpa_valor, "lpa_unidad": p.lpa_unidad, "apob": p.apob,
-        "diabetes": p.diabetes, "ckd": p.ckd, "egfr": p.egfr, "hta": p.hta, "tabaquismo": p.tabaquismo,
+        "diabetes": p.diabetes, "ckd": p.ckd, "egfr": p.egfr, "hta": p.hta, "tratamiento_hta": p.tratamiento_hta, "tabaquismo": p.tabaquismo,
         "inflamacion_cronica": p.inflamacion_cronica, "antecedente_familiar": p.antecedente_familiar,
         "menopausia_precoz": p.menopausia_precoz, "preeclampsia": p.preeclampsia,
         "ascvd": p.ascvd, "iam": p.iam, "acv": p.acv, "pad": p.pad, "revascularizacion": p.revascularizacion,
@@ -1500,6 +1505,66 @@ def render_login():
                 if ok_ok: st.success(msg)
                 else: st.error(msg)
 
+
+# =========================================================
+# Sincronizacion PREVENT desde barra lateral
+# =========================================================
+def _ss_get(name: str, default=None):
+    return st.session_state.get(name, default)
+
+def _prevent_bool_txt(v: bool) -> str:
+    return "Si" if bool(v) else "No"
+
+def get_prevent_inputs_from_state() -> Dict[str, object]:
+    """Devuelve las variables PREVENT tomadas desde los mismos widgets de la barra lateral."""
+    return {
+        "Edad": _ss_get("prev_edad", 55),
+        "Sexo": _ss_get("prev_sexo", "Masculino"),
+        "Colesterol total": _ss_get("prev_colesterol_total", 220.0),
+        "HDL-C": _ss_get("prev_hdl", 45.0),
+        "Presion sistolica": _ss_get("prev_pas", 130.0),
+        "Tratamiento antihipertensivo": _prevent_bool_txt(_ss_get("prev_tratamiento_hta", False)),
+        "Diabetes": _prevent_bool_txt(_ss_get("prev_diabetes", False)),
+        "Tabaquismo activo": _prevent_bool_txt(_ss_get("prev_tabaquismo", False)),
+        "eGFR": _ss_get("prev_egfr", 75.0),
+        "Estatina actual": _ss_get("prev_estatina", "Ninguna"),
+        "ASCVD clinica": _prevent_bool_txt(_ss_get("prev_ascvd", False)),
+    }
+
+def render_prevent_sync_panel(show_editor: bool = False):
+    """Panel unico de variables PREVENT sincronizadas con Evaluacion clinica."""
+    st.markdown("### Variables sincronizadas para PREVENT")
+    st.caption("Estos datos se completan automaticamente desde la barra vertical de ingreso clinico. Si se editan aqui, quedan sincronizados para la evaluacion.")
+
+    if show_editor:
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.number_input("Edad", 18, 100, int(_ss_get("prev_edad", 55)), key="prev_edad")
+            st.selectbox("Sexo", ["Masculino", "Femenino"], key="prev_sexo")
+            st.number_input("Presion sistolica / PAS (mmHg)", 70.0, 260.0, float(_ss_get("prev_pas", 130.0)), 1.0, key="prev_pas")
+        with c2:
+            st.number_input("Colesterol total (mg/dL)", 0.0, 600.0, float(_ss_get("prev_colesterol_total", 220.0)), 1.0, key="prev_colesterol_total")
+            st.number_input("HDL-C (mg/dL)", 0.0, 150.0, float(_ss_get("prev_hdl", 45.0)), 1.0, key="prev_hdl")
+            st.number_input("eGFR ml/min/1.73m2", 0.0, 150.0, float(_ss_get("prev_egfr", 75.0)), 1.0, key="prev_egfr")
+        with c3:
+            st.checkbox("Diabetes", key="prev_diabetes")
+            st.checkbox("Tabaquismo activo", key="prev_tabaquismo")
+            st.checkbox("Tratamiento antihipertensivo", key="prev_tratamiento_hta")
+            st.checkbox("ASCVD clinica establecida", key="prev_ascvd")
+
+    datos = get_prevent_inputs_from_state()
+    df_prev = pd.DataFrame([datos])
+    st.dataframe(df_prev, use_container_width=True, hide_index=True)
+
+    ascvd = bool(_ss_get("prev_ascvd", False))
+    edad = int(_ss_get("prev_edad", 55) or 55)
+    if ascvd or edad < 30 or edad > 79:
+        st.warning("PREVENT se utiliza para prevencion primaria en adultos de 30 a 79 anos sin ASCVD clinica establecida.")
+    else:
+        st.success("Variables basicas listas para cargar/calcular PREVENT en prevencion primaria.")
+
+    st.caption("Por seguridad metodologica, los porcentajes PREVENT 10 y 30 anos se guardan como resultado oficial transcripto, pero las variables de entrada ya no se duplican: quedan sincronizadas en toda la app.")
+
 # =========================================================
 # UI - Aplicacion principal
 # =========================================================
@@ -1526,11 +1591,11 @@ def render_evaluacion():
         medico = st.text_input("Medico", u.get("nombre", "") or "")
         matricula = st.text_input("Matricula", u.get("matricula", "") or "")
         st.subheader("Demograficos")
-        edad = st.number_input("Edad", 18, 100, 55)
-        sexo = st.selectbox("Sexo", ["Masculino", "Femenino"])
+        edad = st.number_input("Edad", 18, 100, 55, key="prev_edad")
+        sexo = st.selectbox("Sexo", ["Masculino", "Femenino"], key="prev_sexo")
         st.subheader("Lipidos")
-        colesterol_total = st.number_input("Colesterol total (mg/dL)", 0.0, 600.0, 220.0, 1.0)
-        hdl = st.number_input("HDL-C (mg/dL)", 0.0, 150.0, 45.0, 1.0)
+        colesterol_total = st.number_input("Colesterol total (mg/dL)", 0.0, 600.0, 220.0, 1.0, key="prev_colesterol_total")
+        hdl = st.number_input("HDL-C (mg/dL)", 0.0, 150.0, 45.0, 1.0, key="prev_hdl")
         tg = st.number_input("Trigliceridos (mg/dL)", 0.0, 1000.0, 150.0, 1.0)
         ldl_basal = st.number_input("LDL-C basal/pretratamiento (mg/dL)", 0.0, 500.0, 160.0, 1.0)
         ldl_actual = st.number_input("LDL-C actual (mg/dL)", 0.0, 500.0, 120.0, 1.0)
@@ -1544,24 +1609,26 @@ def render_evaluacion():
         mide_apob = st.checkbox("ApoB disponible")
         apob = st.number_input("ApoB (mg/dL)", 0.0, 300.0, 100.0, 1.0) if mide_apob else None
         st.subheader("Comorbilidades y potenciadores")
-        diabetes = st.checkbox("Diabetes")
+        diabetes = st.checkbox("Diabetes", key="prev_diabetes")
         ckd = st.checkbox("Enfermedad renal cronica")
-        egfr = st.number_input("eGFR ml/min/1.73m2", 0.0, 150.0, 75.0, 1.0) if ckd else None
-        hta = st.checkbox("Hipertension arterial")
-        tabaquismo = st.checkbox("Tabaquismo activo")
+        egfr = st.number_input("eGFR ml/min/1.73m2 para PREVENT", 0.0, 150.0, 75.0, 1.0, key="prev_egfr")
+        hta = st.checkbox("Hipertension arterial", key="prev_hta")
+        presion_sistolica = st.number_input("Presion sistolica / PAS para PREVENT (mmHg)", 70.0, 260.0, 130.0, 1.0, key="prev_pas")
+        tratamiento_hta = st.checkbox("Tratamiento antihipertensivo", key="prev_tratamiento_hta")
+        tabaquismo = st.checkbox("Tabaquismo activo", key="prev_tabaquismo")
         inflamacion_cronica = st.checkbox("Inflamacion cronica")
         antecedente_familiar = st.checkbox("ASCVD prematura familiar")
         menopausia_precoz = st.checkbox("Menopausia precoz") if sexo == "Femenino" else False
         preeclampsia = st.checkbox("Antecedente de preeclampsia") if sexo == "Femenino" else False
         fh_sospecha = st.checkbox("Sospecha de hipercolesterolemia familiar")
         st.subheader("Historia cardiovascular")
-        ascvd = st.checkbox("ASCVD clinica establecida")
+        ascvd = st.checkbox("ASCVD clinica establecida", key="prev_ascvd")
         iam = st.checkbox("IAM previo") if ascvd else False
         acv = st.checkbox("ACV/AIT previo") if ascvd else False
         pad = st.checkbox("Enfermedad arterial periferica") if ascvd else False
         revascularizacion = st.checkbox("Revascularizacion previa") if ascvd else False
         st.subheader("Imagen y PREVENT")
-        st.caption("Calcule PREVENT en la web oficial y transcriba el resultado.")
+        st.caption("Las variables requeridas para PREVENT se toman automaticamente de la barra vertical. Solo transcriba el resultado final si usa la calculadora oficial.")
         tiene_cac = st.checkbox("CAC disponible")
         cac = st.number_input("CAC Agatston", 0, 5000, 0, 1) if tiene_cac else None
         if ascvd or edad < 30 or edad > 79:
@@ -1573,9 +1640,11 @@ def render_evaluacion():
             prev30 = st.number_input("PREVENT 30 anos (%)", 0.0, 100.0, 0.0, 0.1)
         prevent_10 = prev10 if prev10 > 0 else None
         prevent_30 = prev30 if prev30 > 0 else None
+        with st.expander("Ver variables PREVENT sincronizadas", expanded=False):
+            render_prevent_sync_panel(show_editor=False)
         st.link_button("Abrir calculadora PREVENT oficial AHA", PREVENT_URL)
         st.subheader("Medicacion actual")
-        estatina = st.selectbox("Estatina", ["Ninguna", "Atorvastatina", "Rosuvastatina", "Simvastatina", "Pravastatina", "Otra"])
+        estatina = st.selectbox("Estatina", ["Ninguna", "Atorvastatina", "Rosuvastatina", "Simvastatina", "Pravastatina", "Otra"], key="prev_estatina")
         dosis_estatina = st.text_input("Dosis de estatina", "")
         ezetimibe = st.checkbox("Ezetimibe")
         pcsk9 = st.checkbox("PCSK9 mAb")
@@ -1585,8 +1654,8 @@ def render_evaluacion():
         observaciones = st.text_area("Observaciones", "")
 
     p = Patient(paciente, dni, medico, matricula, edad, sexo, ldl_basal, ldl_actual, hdl, tg,
-                colesterol_total, no_hdl, lpa_valor, lpa_unidad, apob, diabetes, ckd, egfr, hta,
-                tabaquismo, inflamacion_cronica, antecedente_familiar, menopausia_precoz, preeclampsia,
+                colesterol_total, no_hdl, lpa_valor, lpa_unidad, apob, diabetes, ckd, egfr, presion_sistolica, hta,
+                tratamiento_hta, tabaquismo, inflamacion_cronica, antecedente_familiar, menopausia_precoz, preeclampsia,
                 ascvd, iam, acv, pad, revascularizacion, fh_sospecha, cac, prevent_10, prevent_30,
                 estatina, dosis_estatina, ezetimibe, pcsk9, inclisiran, bempedoico, intolerancia_sams,
                 observaciones)
@@ -1966,16 +2035,15 @@ def render_calculadora_prevent():
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.subheader("Calculadora PREVENT oficial AHA")
     st.markdown("""
-1. Calcule el riesgo en la web oficial.
-2. Vuelva a Evaluacion clinica.
-3. Transcriba PREVENT 10 anos y 30 anos.
-4. Exporte informes y guarde el paciente.
+Este modulo queda sincronizado con la barra vertical de **Evaluacion clinica**.
+Las variables PREVENT se cargan una sola vez y se reutilizan para el calculo, el informe, la semaforizacion y la decision farmacologica.
 """)
+    render_prevent_sync_panel(show_editor=True)
     st.link_button("Abrir calculadora PREVENT oficial AHA", PREVENT_URL)
     try:
         components.iframe(PREVENT_URL, height=950, scrolling=True)
     except Exception as e:
-        st.warning(f"No se pudo embebida. Detalle: {e}")
+        st.warning(f"No se pudo embeber. Detalle: {e}")
     st.markdown('</div>', unsafe_allow_html=True)
 
 def render_ayuda():
@@ -2008,6 +2076,7 @@ En Streamlit Cloud el filesystem es efimero; para produccion use una BBDD extern
 - Exportacion total multiusuario (solo admin) en Excel y CSV consolidado.
 - Algoritmo claro de decision farmacologica para prevencion primaria con droga y dosis sugerida.
 - PDFs medicos y para paciente CON GRAFICOS SEMAFORIZADOS (barras de meta LDL, barra PREVENT, cajas coloreadas por indicador).
+- Variables PREVENT sincronizadas con la barra vertical: edad, sexo, colesterol total, HDL, PAS, diabetes, tabaquismo, eGFR, tratamiento antihipertensivo y estatina.
 """)
     st.markdown('</div>', unsafe_allow_html=True)
 
