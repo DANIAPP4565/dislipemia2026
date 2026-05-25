@@ -1,5 +1,7 @@
-streamlit>=1.28
-pandas>=2.0
-openpyxl>=3.1.2
-xlsxwriter>=3.1.9
+streamlit
+pandas
+numpy
+openpyxl
+matplotlib
+fpdf2
 pyprevent==0.1.5
