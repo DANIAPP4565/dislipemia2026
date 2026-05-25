@@ -1,8 +1,6 @@
-streamlit
-pandas
-numpy
-openpyxl==3.1.5
-xlsxwriter==3.2.0
-matplotlib
-fpdf2
-pyprevent==0.1.5
+def dataframe_a_excel_bytes(df):
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Riesgo_CV")
+    output.seek(0)
+    return output.getvalue()
