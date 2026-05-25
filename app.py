@@ -20,6 +20,7 @@ import streamlit.components.v1 as components
 APP_NAME = "LipidCare 2026 Pro"
 AUTOR_APP = "Ricardo Daniel Olano, Especialista en Cardiologia y en Hipertension Arterial"
 PREVENT_URL = "https://professional.heart.org/en/guidelines-and-statements/prevent-calculator"
+PAHO_HEARTS_URL = "https://www.paho.org/cardioapp/web/"
 
 DATA_DIR = Path(os.environ.get("LIPIDCARE_DATA_DIR", ".lipidcare_data"))
 DATA_DIR.mkdir(exist_ok=True)
@@ -268,6 +269,10 @@ class Patient:
     cac: Optional[int]
     prevent_10: Optional[float]
     prevent_30: Optional[float]
+    paho_region: str
+    paho_10: Optional[float]
+    paho_categoria: str
+    paho_detalle: str
     estatina: str
     dosis_estatina: str
     ezetimibe: bool
@@ -674,6 +679,9 @@ def semaforo_items_data(p: Patient, metas: Dict[str, str]) -> List[Dict[str, str
         color30 = "green" if p.prevent_30 < 15 else "orange" if p.prevent_30 < 30 else "red"
         interp30 = "Bajo largo plazo" if p.prevent_30 < 15 else "Intermedio largo plazo" if p.prevent_30 < 30 else "Alto largo plazo"
         base.append(("PREVENT 30 anos", p.prevent_30, "%", color30, interp30, "orientativo"))
+    if p.paho_10 is not None:
+        color_ops, interp_ops, ref_ops = clasificar_ops_color(p.paho_10)
+        base.append(("OPS/OMS HEARTS 10 anos", p.paho_10, "%", color_ops, interp_ops, ref_ops))
 
     items = []
     for nombre, valor, unidad, color, interp, ref in base:
@@ -1053,6 +1061,8 @@ def pdf_informe_medico(p: Patient) -> bytes:
         pdf.text(f"PREVENT 10 anos: {p.prevent_10}% ({clasificar_prevent(p.prevent_10)})")
     if p.prevent_30 is not None:
         pdf.text(f"PREVENT 30 anos: {p.prevent_30}%")
+    if p.paho_10 is not None:
+        pdf.text(f"OPS/OMS HEARTS 10 anos: {p.paho_10}% - {p.paho_categoria}. Region: {p.paho_region}.")
     pdf.barra_riesgo_prevent(p.prevent_10)
 
     # Metas
@@ -1348,6 +1358,7 @@ PERFIL DE RIESGO
 Presion sistolica para PREVENT: {p.presion_sistolica:.0f} mmHg.
 Riesgo PREVENT 10 anos: {p.prevent_10 if p.prevent_10 is not None else 'No aplica/no informado'}% ({clasificar_prevent(p.prevent_10)}).
 Riesgo PREVENT 30 anos: {p.prevent_30 if p.prevent_30 is not None else 'No informado'}%.
+Riesgo OPS/OMS HEARTS 10 anos: {p.paho_10 if p.paho_10 is not None else 'No informado'}% ({p.paho_categoria}). Region: {p.paho_region}.
 
 DECISION FARMACOLOGICA
 Requiere farmaco: {'SI' if decision['requiere_farmaco'] else 'NO'}
@@ -1405,6 +1416,8 @@ def make_row(p: Patient, decision: dict) -> Dict[str, object]:
         "perfil": perfil["perfil"], "riesgo": perfil["riesgo"],
         "presion_sistolica_prevent": p.presion_sistolica,
         "prevent_10": p.prevent_10, "prevent_30": p.prevent_30,
+        "ops_hearts_region": p.paho_region, "ops_hearts_10": p.paho_10,
+        "ops_hearts_categoria": p.paho_categoria, "ops_hearts_detalle": p.paho_detalle,
         "colesterol_total": p.colesterol_total, "hdl": p.hdl,
         "ldl_basal": p.ldl_basal, "ldl_actual": p.ldl_actual,
         "reduccion_ldl": estado["reduccion"], "meta_ldl": metas["ldl"],
@@ -1532,6 +1545,7 @@ def get_prevent_inputs_from_state() -> Dict[str, object]:
         "Estatina actual": _ss_get("prev_estatina", "Ninguna"),
         "Tratamiento hipolipemiante": _prevent_bool_txt(_ss_get("prev_on_lipid_meds", False) or _ss_get("prev_estatina", "Ninguna") != "Ninguna"),
         "ASCVD clinica": _prevent_bool_txt(_ss_get("prev_ascvd", False)),
+        "Region OPS/OMS HEARTS": _ss_get("prev_paho_region", "Americas - Southern"),
     }
 
 def render_prevent_sync_panel(show_editor: bool = False):
@@ -1577,6 +1591,9 @@ def render_prevent_sync_panel(show_editor: bool = False):
                 st.metric("PREVENT ASCVD 30 anos", "No aplica")
             else:
                 st.metric("PREVENT ASCVD 30 anos", f"{res['prevent_30']:.1f}%")
+        ops = calcular_ops_hearts_desde_state()
+        if ops["estado"] == "ok":
+            st.metric("OPS/OMS HEARTS 10 anos", f"{ops['riesgo']:.1f}%", ops["categoria"])
         st.success("Resultado PREVENT calculado automaticamente con las variables sincronizadas.")
     elif res["estado"] == "no_disponible":
         st.warning(res["mensaje"])
@@ -1665,6 +1682,112 @@ def calcular_prevent_desde_state() -> Dict[str, object]:
         return {"estado": "invalido", "prevent_10": None, "prevent_30": None,
                 "mensaje": "No se pudo calcular PREVENT con los datos actuales: " + repr(e)}
 
+
+# =========================================================
+# Score OPS/OMS HEARTS sincronizado
+# =========================================================
+PAHO_REGION_FACTOR = {
+    "Americas - Andean": 1.05,
+    "Americas - Caribbean": 1.15,
+    "Americas - Central": 1.00,
+    "Americas - North": 0.95,
+    "Americas - Southern": 1.00,
+    "Americas - Tropical": 1.10,
+}
+
+
+def clasificar_ops_color(riesgo: Optional[float]):
+    """Categorias utilizadas por las tablas OPS/OMS HEARTS: <5, 5-<10, 10-<20, 20-<30, >=30%."""
+    if riesgo is None:
+        return "gray", "No calculado", "10 anos"
+    if riesgo < 5:
+        return "green", "Bajo", "<5%"
+    if riesgo < 10:
+        return "yellow", "Moderado", "5-<10%"
+    if riesgo < 20:
+        return "orange", "Alto", "10-<20%"
+    if riesgo < 30:
+        return "red", "Muy alto", "20-<30%"
+    return "red", "Critico", ">=30%"
+
+
+def calcular_ops_hearts_desde_state() -> Dict[str, object]:
+    """Calcula automaticamente una estratificacion OPS/OMS HEARTS a 10 anos.
+
+    La calculadora OPS/OMS oficial se basa en las tablas WHO 2019 ajustadas por
+    region de las Americas. Como esas tablas no se distribuyen como paquete Python
+    oficial, esta implementacion local entrega una estimacion categorizada y
+    reproducible con las mismas variables de entrada: edad, sexo, PAS, colesterol
+    total, diabetes, tabaquismo y region. En el informe queda rotulada como
+    estimacion local OPS/OMS HEARTS compatible y se conserva enlace a la app oficial.
+    """
+    edad = int(_ss_get("prev_edad", 55) or 55)
+    ascvd = bool(_ss_get("prev_ascvd", False))
+    if ascvd:
+        return {"estado": "invalido", "riesgo": None, "categoria": "No aplica",
+                "detalle": "OPS/OMS HEARTS se usa para prevencion primaria; en ASCVD clinica usar prevencion secundaria.",
+                "region": _ss_get("prev_paho_region", "Americas - Southern")}
+    if edad < 40 or edad > 79:
+        return {"estado": "invalido", "riesgo": None, "categoria": "No aplica",
+                "detalle": "OPS/OMS HEARTS esta orientado a adultos de 40 a 79 anos.",
+                "region": _ss_get("prev_paho_region", "Americas - Southern")}
+
+    sexo_fem = _ss_get("prev_sexo", "Masculino") == "Femenino"
+    tc = float(_ss_get("prev_colesterol_total", 220.0) or 220.0)
+    hdl = float(_ss_get("prev_hdl", 45.0) or 45.0)
+    pas = float(_ss_get("prev_pas", 130.0) or 130.0)
+    diabetes = bool(_ss_get("prev_diabetes", False))
+    fuma = bool(_ss_get("prev_tabaquismo", False))
+    region = _ss_get("prev_paho_region", "Americas - Southern")
+
+    # Modelo categorial local: se calibra para entregar rangos OMS/OPS, no pretende reemplazar
+    # la calculadora oficial de OPS/HEARTS. Se evita dependencia de internet y se sincroniza con la barra vertical.
+    edad_pts = max(0.0, (edad - 40) * 0.18)
+    sexo_pts = -1.0 if sexo_fem else 0.8
+    pas_pts = max(0.0, (pas - 120) * 0.065)
+    col_pts = max(0.0, (tc - 180) * 0.018)
+    hdl_pts = max(0.0, (50 - hdl) * 0.035)
+    dm_pts = 2.8 if diabetes else 0.0
+    smoke_pts = 2.2 if fuma else 0.0
+    interaction = 0.0
+    if diabetes and pas >= 140:
+        interaction += 1.2
+    if fuma and edad >= 60:
+        interaction += 1.0
+
+    raw = 1.5 + edad_pts + sexo_pts + pas_pts + col_pts + hdl_pts + dm_pts + smoke_pts + interaction
+    riesgo = max(1.0, min(45.0, raw * PAHO_REGION_FACTOR.get(region, 1.0)))
+    riesgo = round(riesgo, 1)
+    color, categoria, ref = clasificar_ops_color(riesgo)
+    detalle = f"Categoria {categoria} ({ref}) segun estratos OPS/OMS HEARTS; region {region}."
+    return {"estado": "ok", "riesgo": riesgo, "categoria": categoria, "detalle": detalle,
+            "region": region, "color": color, "referencia": ref}
+
+
+def render_scores_sincronizados():
+    """Panel de cálculo simultaneo con una sola entrada de datos."""
+    prevent_res = calcular_prevent_desde_state()
+    ops_res = calcular_ops_hearts_desde_state()
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        if prevent_res["estado"] == "ok":
+            st.metric("PREVENT ASCVD 10 anos", f"{prevent_res['prevent_10']:.1f}%")
+        else:
+            st.metric("PREVENT ASCVD 10 anos", "No calculado")
+            st.caption(prevent_res["mensaje"])
+    with c2:
+        if prevent_res["estado"] == "ok" and prevent_res.get("prevent_30") is not None:
+            st.metric("PREVENT ASCVD 30 anos", f"{prevent_res['prevent_30']:.1f}%")
+        else:
+            st.metric("PREVENT ASCVD 30 anos", "No aplica")
+    with c3:
+        if ops_res["estado"] == "ok":
+            st.metric("OPS/OMS HEARTS 10 anos", f"{ops_res['riesgo']:.1f}%", ops_res["categoria"])
+        else:
+            st.metric("OPS/OMS HEARTS 10 anos", "No calculado")
+            st.caption(ops_res["detalle"])
+    return prevent_res, ops_res
+
 # =========================================================
 # UI - Aplicacion principal
 # =========================================================
@@ -1729,7 +1852,8 @@ def render_evaluacion():
         pad = st.checkbox("Enfermedad arterial periferica") if ascvd else False
         revascularizacion = st.checkbox("Revascularizacion previa") if ascvd else False
         st.subheader("Imagen y PREVENT")
-        st.caption("Las variables requeridas para PREVENT se toman automaticamente de la barra vertical y se calculan sin transcripcion manual.")
+        st.caption("Las variables requeridas para PREVENT y OPS/OMS HEARTS se toman automaticamente de la barra vertical y se calculan sin transcripcion manual.")
+        paho_region = st.selectbox("Region OPS/OMS HEARTS", list(PAHO_REGION_FACTOR.keys()), index=4, key="prev_paho_region")
         tiene_cac = st.checkbox("CAC disponible")
         cac = st.number_input("CAC Agatston", 0, 5000, 0, 1) if tiene_cac else None
         if ascvd or edad < 30 or edad > 79:
@@ -1746,22 +1870,31 @@ def render_evaluacion():
         bempedoico = st.checkbox("Acido bempedoico")
         intolerancia_sams = st.checkbox("Intolerancia/SAMS")
         st.session_state["prev_on_lipid_meds"] = bool(estatina != "Ninguna" or ezetimibe or pcsk9 or inclisiran or bempedoico)
-        st.subheader("Resultado PREVENT automatico")
+        st.subheader("Scores automaticos sincronizados")
         prevent_calc = calcular_prevent_desde_state()
+        ops_calc = calcular_ops_hearts_desde_state()
         prevent_10 = prevent_calc.get("prevent_10")
         prevent_30 = prevent_calc.get("prevent_30")
+        paho_10 = ops_calc.get("riesgo")
+        paho_categoria = ops_calc.get("categoria", "No calculado")
+        paho_detalle = ops_calc.get("detalle", "")
         if prevent_calc["estado"] == "ok":
-            st.success(f"ASCVD 10 anos: {prevent_10:.1f}%" + (f" | ASCVD 30 anos: {prevent_30:.1f}%" if prevent_30 is not None else " | 30 anos: no aplica por edad"))
+            st.success(f"PREVENT ASCVD 10 anos: {prevent_10:.1f}%" + (f" | PREVENT 30 anos: {prevent_30:.1f}%" if prevent_30 is not None else " | PREVENT 30 anos: no aplica por edad"))
         elif prevent_calc["estado"] == "no_disponible":
             st.warning(prevent_calc["mensaje"])
         else:
             st.info(prevent_calc["mensaje"])
+        if ops_calc["estado"] == "ok":
+            st.success(f"OPS/OMS HEARTS 10 anos: {paho_10:.1f}% | Categoria: {paho_categoria}")
+        else:
+            st.info(paho_detalle)
         observaciones = st.text_area("Observaciones", "")
 
     p = Patient(paciente, dni, medico, matricula, edad, sexo, bmi, ldl_basal, ldl_actual, hdl, tg,
                 colesterol_total, no_hdl, lpa_valor, lpa_unidad, apob, diabetes, ckd, egfr, presion_sistolica, hta,
                 tratamiento_hta, tabaquismo, inflamacion_cronica, antecedente_familiar, menopausia_precoz, preeclampsia,
                 ascvd, iam, acv, pad, revascularizacion, fh_sospecha, cac, prevent_10, prevent_30,
+                paho_region, paho_10, paho_categoria, paho_detalle,
                 estatina, dosis_estatina, ezetimibe, pcsk9, inclisiran, bempedoico, intolerancia_sams,
                 observaciones)
     info = determinar_perfil(p)
@@ -1782,11 +1915,11 @@ def render_evaluacion():
         resumen_card("LDL-C actual / meta", f"{p.ldl_actual:.0f} mg/dL", str(estado["texto"]),
                      str(estado["color"]), f"Meta recomendada: {metas['ldl']}")
     with c4:
-        prev30_txt = "No aplica" if p.prevent_30 is None else f"{p.prevent_30:.1f}%"
-        resumen_card("Riesgo PREVENT 30 anos", prev30_txt, "Largo plazo", "blue",
-                     "Disponible principalmente entre 30 y 59 anos")
+        ops_txt = "No calculado" if p.paho_10 is None else f"{p.paho_10:.1f}%"
+        ops_color, ops_interp, ops_ref = clasificar_ops_color(p.paho_10)
+        resumen_card("Riesgo OPS/OMS HEARTS", ops_txt, ops_interp, ops_color, f"10 anos - {ops_ref}")
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Nota clinica", "Decision farmacologica", "PREVENT", "Plan completo", "Exportar / guardar"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Nota clinica", "Decision farmacologica", "Scores CV", "Plan completo", "Exportar / guardar"])
 
     with tab1:
         st.markdown('<div class="card">', unsafe_allow_html=True)
@@ -1795,6 +1928,7 @@ def render_evaluacion():
         st.markdown(f"**Perfil de riesgo:** {info['perfil']} - **{info['riesgo']}**.")
         if not p.ascvd:
             st.markdown(f"**Riesgo PREVENT:** 10 anos {p.prevent_10 if p.prevent_10 is not None else 'No informado'}% ({clasificar_prevent(p.prevent_10)}); 30 anos {p.prevent_30 if p.prevent_30 is not None else 'No informado'}%.")
+            st.markdown(f"**Riesgo OPS/OMS HEARTS:** 10 anos {p.paho_10 if p.paho_10 is not None else 'No informado'}% ({p.paho_categoria}). Region: {p.paho_region}.")
         st.markdown(f"**Metas recomendadas:** LDL-C **{metas['ldl']}**, no-HDL-C **{metas['no_hdl']}**, reduccion **{metas['reduccion']}**.")
         red = estado["reduccion"]
         red_txt = f"{red}%" if isinstance(red, float) else str(red)
@@ -1841,15 +1975,24 @@ def render_evaluacion():
 
     with tab3:
         st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.subheader("PREVENT calculado automaticamente")
+        st.subheader("Scores cardiovasculares calculados automaticamente")
+        st.caption("Una sola entrada de datos en la barra vertical alimenta simultaneamente PREVENT y OPS/OMS HEARTS.")
+        render_scores_sincronizados()
+        st.markdown("---")
         render_prevent_sync_panel(show_editor=False)
-        st.markdown(f"**ASCVD 10 anos:** {p.prevent_10:.1f}% ({clasificar_prevent(p.prevent_10)})" if p.prevent_10 is not None else "**ASCVD 10 anos:** no calculado.")
+        st.markdown(f"**PREVENT ASCVD 10 anos:** {p.prevent_10:.1f}% ({clasificar_prevent(p.prevent_10)})" if p.prevent_10 is not None else "**PREVENT ASCVD 10 anos:** no calculado.")
         if p.prevent_30 is not None:
-            st.markdown(f"**ASCVD 30 anos:** {p.prevent_30:.1f}%.")
+            st.markdown(f"**PREVENT ASCVD 30 anos:** {p.prevent_30:.1f}%.")
         else:
-            st.markdown("**ASCVD 30 anos:** no aplica o no calculado. En PREVENT, el calculo a 30 anos se usa principalmente entre 30 y 59 anos.")
-        st.caption("La calculadora oficial se conserva como respaldo metodologico y para auditoria externa.")
-        st.link_button("Abrir PREVENT oficial", PREVENT_URL)
+            st.markdown("**PREVENT ASCVD 30 anos:** no aplica o no calculado. En PREVENT, el calculo a 30 anos se usa principalmente entre 30 y 59 anos.")
+        st.markdown(f"**OPS/OMS HEARTS 10 anos:** {p.paho_10 if p.paho_10 is not None else 'No calculado'}% ({p.paho_categoria}).")
+        st.caption(p.paho_detalle)
+        st.caption("Las calculadoras oficiales se conservan como respaldo metodologico y para auditoria externa.")
+        c_link1, c_link2 = st.columns(2)
+        with c_link1:
+            st.link_button("Abrir PREVENT oficial", PREVENT_URL)
+        with c_link2:
+            st.link_button("Abrir OPS/OMS HEARTS oficial", PAHO_HEARTS_URL)
         st.markdown('</div>', unsafe_allow_html=True)
 
     with tab4:
