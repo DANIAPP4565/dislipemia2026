@@ -24,7 +24,7 @@ USERS_FILE = DATA_DIR / "users.json"
 HISTORIAL_FILE = DATA_DIR / "historial.json"
 
 # =========================================================
-# MOTOR DE CÁLCULO PREVENT (EVITA PARÁMETROS 'tc')
+# MOTOR DE CÁLCULO PREVENT (CORREGIDO)
 # =========================================================
 PREVENT_AVAILABLE = False
 PREVENT_IMPORT_ERROR = ""
@@ -34,13 +34,13 @@ try:
 except Exception as e:
     PREVENT_IMPORT_ERROR = repr(e)
 
-# Configuración inicial de Streamlit (DEBE SER LA PRIMERA EN EJECUTARSE)
+# Configuración inicial de Streamlit (Obligatorio como primera instrucción)
 st.set_page_config(page_title=APP_NAME, page_icon="🫀", layout="wide", initial_sidebar_state="expanded")
 
 # =========================================================
-# ESTILOS CSS (INYECTADOS DE FORMA SEGURA)
+# ESTILOS CSS (CADENA CORREGIDA SIN SUB-ESCAPES)
 # =========================================================
-st.markdown("""
+css_styles = """
 <style>
 html, body, [class*="css"] { color:#111827 !important; }
 .main {background:#F8FAFC;}
@@ -62,4 +62,18 @@ section[data-testid="stSidebar"] { background:#F1F5F9 !important; }
 .alert-orange {border-left:6px solid #EA580C; background:#FFF7ED; padding:14px 16px; border-radius:14px; margin-bottom:15px;}
 .semaforo-card{background:#FFFFFF; border:1px solid #CBD5E1; border-radius:18px; padding:14px 15px; box-shadow:0 4px 14px rgba(15,23,42,.05); min-height:116px; margin-bottom:10px;}
 .semaforo-title{font-size:.88rem;color:#334155 !important;font-weight:800;margin-bottom:4px;}
-.semaforo-value{font-size:1.
+.semaforo-value{font-size:1.28rem;color:#111827 !important;font-weight:900;margin-bottom:6px;}
+.semaforo-ref{font-size:.78rem;color:#475569 !important;}
+.user-bar {background:#0F172A; color:white !important; padding:10px 18px; border-radius:14px; margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; font-weight:800;}
+.rx-card {background:#FFFFFF; border:2px solid #0B4F8A; border-radius:18px; padding:18px 20px; margin-bottom:14px;}
+.rx-title {color:#0B4F8A !important; font-weight:900; font-size:1.1rem; margin-bottom:10px;}
+.rx-drug {background:#EFF6FF; border-left:5px solid #0B4F8A; padding:10px 14px; border-radius:10px; margin:6px 0; color:#0B4F8A !important; font-weight:800;}
+</style>
+"""
+st.markdown(css_styles, unsafe_allow_html=True)
+
+# =========================================================
+# COMPONENTES VISUALES Y HELPERS
+# =========================================================
+def badge_html(texto: str, color: str = "blue") -> str:
+    cls = {"green":"badge-green", "yellow":"badge-yellow", "
