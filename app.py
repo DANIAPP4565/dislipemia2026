@@ -7,32 +7,24 @@ import json
 import hashlib
 import secrets
 import textwrap
-import zlib
-import math
 from dataclasses import dataclass
 from typing import Optional, Dict, List, Tuple
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
-import streamlit.components.v1 as components
 
 # =========================================================
 # CONFIGURACIÓN
 # =========================================================
 APP_NAME = "LipidCare 2026 Pro"
 AUTOR_APP = "Ricardo Daniel Olano, Especialista en Cardiología y en Hipertensión Arterial"
-PREVENT_URL = "https://professional.heart.org/en/guidelines-and-statements/prevent-calculator"
-PAHO_HEARTS_URL = "https://www.paho.org/cardioapp/web/"
 
 DATA_DIR = Path(os.environ.get("LIPIDCARE_DATA_DIR", ".lipidcare_data"))
 DATA_DIR.mkdir(exist_ok=True)
 USERS_FILE = DATA_DIR / "users.json"
 HISTORIAL_FILE = DATA_DIR / "historial.json"
 
-DEFAULT_ADMIN_USER = "admin"
-DEFAULT_ADMIN_PASS = "admin1234"
-
 # =========================================================
-# MOTOR DE CÁLCULO PREVENT (MÓDULO INTEGRADO SIN PARÁMETROS 'tc')
+# MOTOR DE CÁLCULO PREVENT (EVITA PARÁMETROS 'tc')
 # =========================================================
 PREVENT_AVAILABLE = False
 PREVENT_IMPORT_ERROR = ""
@@ -42,15 +34,11 @@ try:
 except Exception as e:
     PREVENT_IMPORT_ERROR = repr(e)
 
-# =========================================================
-# MOTOR EXCEL
-# =========================================================
-EXCEL_ENGINE = "openpyxl"
-
+# Configuración inicial de Streamlit (DEBE SER LA PRIMERA EN EJECUTARSE)
 st.set_page_config(page_title=APP_NAME, page_icon="🫀", layout="wide", initial_sidebar_state="expanded")
 
 # =========================================================
-# ESTILOS INSTITUCIONALES SEMAFORIZADOS
+# ESTILOS CSS (INYECTADOS DE FORMA SEGURA)
 # =========================================================
 st.markdown("""
 <style>
@@ -74,28 +62,4 @@ section[data-testid="stSidebar"] { background:#F1F5F9 !important; }
 .alert-orange {border-left:6px solid #EA580C; background:#FFF7ED; padding:14px 16px; border-radius:14px; margin-bottom:15px;}
 .semaforo-card{background:#FFFFFF; border:1px solid #CBD5E1; border-radius:18px; padding:14px 15px; box-shadow:0 4px 14px rgba(15,23,42,.05); min-height:116px; margin-bottom:10px;}
 .semaforo-title{font-size:.88rem;color:#334155 !important;font-weight:800;margin-bottom:4px;}
-.semaforo-value{font-size:1.28rem;color:#111827 !important;font-weight:900;margin-bottom:6px;}
-.semaforo-ref{font-size:.78rem;color:#475569 !important;}
-.user-bar {background:#0F172A; color:white !important; padding:10px 18px; border-radius:14px; margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; font-weight:800;}
-.rx-card {background:#FFFFFF; border:2px solid #0B4F8A; border-radius:18px; padding:18px 20px; margin-bottom:14px;}
-.rx-title {color:#0B4F8A !important; font-weight:900; font-size:1.1rem; margin-bottom:10px;}
-.rx-drug {background:#EFF6FF; border-left:5px solid #0B4F8A; padding:10px 14px; border-radius:10px; margin:6px 0; color:#0B4F8A !important; font-weight:800;}
-</style>
-""", unsafe_allow_html=True)
-
-# =========================================================
-# UTILIDADES DE TEXTO Y COMPONENTES VISUALES
-# =========================================================
-def badge_html(texto: str, color: str = "blue") -> str:
-    cls = {"green":"badge-green", "yellow":"badge-yellow", "orange":"badge-orange",
-           "red":"badge-red", "blue":"badge-blue", "gray":"badge-gray"}.get(color, "badge-blue")
-    return f'<span class="badge {cls}">{texto}</span>'
-
-def semaforo_item(nombre: str, valor, unidad: str, color: str, interpretacion: str, referencia: str):
-    if valor is None: valor_txt = "No calculado"
-    elif isinstance(valor, float): valor_txt = f"{valor:.2f} {unidad}"
-    else: valor_txt = f"{valor} {unidad}"
-    st.markdown(f'<div class="semaforo-card"><div class="semaforo-title">{nombre}</div><div class="semaforo-value">{valor_txt}</div>{badge_html(interpretacion, color)}<div class="semaforo-ref">Referencia: {referencia}</div></div>', unsafe_allow_html=True)
-
-# =========================================================
-# SEGURIDAD Y BASE DE DATOS LOCAL
+.semaforo-value{font-size:1.
