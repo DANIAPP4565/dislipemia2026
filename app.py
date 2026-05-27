@@ -7,18 +7,23 @@ import json
 import hashlib
 import secrets
 import textwrap
+import zlib
+import math
 from dataclasses import dataclass
 from typing import Optional, Dict, List, Tuple
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
+import streamlit.components.v1 as components
 
 # =========================================================
-# CONFIGURACIÓN GENERAL E INICIALIZACIÓN DE STREAMLIT
+# 1. CONFIGURACIÓN E INICIALIZACIÓN DE ENTORNO
 # =========================================================
 APP_NAME = "LipidCare 2026 Pro"
 AUTOR_APP = "Ricardo Daniel Olano, Especialista en Cardiología y en Hipertensión Arterial"
+PREVENT_URL = "https://professional.heart.org/en/guidelines-and-statements/prevent-calculator"
+PAHO_HEARTS_URL = "https://www.paho.org/cardioapp/web/"
 
-# CRUCIAL: st.set_page_config TIENE QUE SER LA PRIMERA INSTRUCCIÓN DE STREAMLIT
+# REGLA DE ORO: set_page_config DEBE SER LA PRIMERA INSTRUCCIÓN DE STREAMLIT
 st.set_page_config(page_title=APP_NAME, page_icon="🫀", layout="wide", initial_sidebar_state="expanded")
 
 DATA_DIR = Path(os.environ.get("LIPIDCARE_DATA_DIR", ".lipidcare_data"))
@@ -26,13 +31,17 @@ DATA_DIR.mkdir(exist_ok=True)
 USERS_FILE = DATA_DIR / "users.json"
 HISTORIAL_FILE = DATA_DIR / "historial.json"
 
-# variables de entorno internas para evitar errores de renderizado lateral
+DEFAULT_ADMIN_USER = "admin"
+DEFAULT_ADMIN_PASS = "admin1234"
+
+# BLINDAJE: Inicialización global de variables de diagnóstico para evitar NameError
 PDF_ENGINE = "interno_sin_dependencias"
+PDF_IMPORT_ERROR = ""
 EXCEL_ENGINE = "openpyxl"
 EXCEL_IMPORT_ERROR = ""
 
 # =========================================================
-# MOTOR DE CÁLCULO PREVENT AUTOMATIZADO (SIN 'tc')
+# 2. MOTOR DE CÁLCULO PREVENT AUTOMATIZADO
 # =========================================================
 PREVENT_AVAILABLE = False
 PREVENT_IMPORT_ERROR = ""
@@ -43,7 +52,7 @@ except Exception as e:
     PREVENT_IMPORT_ERROR = repr(e)
 
 # =========================================================
-# INYECCIÓN DE ESTILOS CSS SEGUROS
+# 3. ESTILOS CSS AVANZADOS Y SEGUROS
 # =========================================================
 css_styles = """
 <style>
@@ -64,20 +73,4 @@ section[data-testid="stSidebar"] * { color:#111827 !important; }
 .badge-blue {background:#BFDBFE; color:#2563EB !important; border:1px solid #2563EB;}
 .badge-gray {background:#E5E7EB; color:#6B7280 !important; border:1px solid #6B7280;}
 .alert-red {border-left:6px solid #B91C1C; background:#FEF2F2; padding:14px 16px; border-radius:14px; margin-bottom:15px;}
-.alert-green {border-left:6px solid #0F766E; background:#ECFDF5; padding:14px 16px; border-radius:14px; margin-bottom:15px;}
-.alert-orange {border-left:6px solid #EA580C; background:#FFF7ED; padding:14px 16px; border-radius:14px; margin-bottom:15px;}
-.semaforo-card{background:#FFFFFF; border:1px solid #CBD5E1; border-radius:18px; padding:14px 15px; box-shadow:0 4px 14px rgba(15,23,42,.05); min-height:116px; margin-bottom:10px;}
-.semaforo-title{font-size:.88rem;color:#334155 !important;font-weight:800;margin-bottom:4px;}
-.semaforo-value{font-size:1.28rem;color:#111827 !important;font-weight:900;margin-bottom:6px;}
-.semaforo-ref{font-size:.78rem;color:#475569 !important;}
-.user-bar {background:#0F172A; color:white !important; padding:10px 18px; border-radius:14px; margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; font-weight:800;}
-.rx-card {background:#FFFFFF; border:2px solid #0B4F8A; border-radius:18px; padding:18px 20px; margin-bottom:14px;}
-.rx-title {color:#0B4F8A !important; font-weight:900; font-size:1.1rem; margin-bottom:10px;}
-.rx-drug {background:#EFF6FF; border-left:5px solid #0B4F8A; padding:10px 14px; border-radius:10px; margin:6px 0; color:#0B4F8A !important; font-weight:800;}
-</style>
-"""
-st.markdown(css_styles, unsafe_allow_html=True)
-
-# =========================================================
-# COMPONENTES VISUALES Y COMPONENTES REUSABLES
-# =================================
+.alert-green {border-left:6px solid #0F766E; background:#ECFDF5; padding:14px 16px; border-radius:14px; margin-bottom:15
