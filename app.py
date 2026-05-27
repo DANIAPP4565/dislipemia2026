@@ -32,7 +32,7 @@ DEFAULT_ADMIN_USER = "admin"
 DEFAULT_ADMIN_PASS = "admin1234"
 
 # =========================================================
-# MOTOR DE CÁLCULO PREVENT (AUTOMATIZADO Y PROTEGIDO)
+# MOTOR DE CÁLCULO PREVENT AUTOMATIZADO (SIN CONFIG 'tc')
 # =========================================================
 PREVENT_AVAILABLE = False
 PREVENT_IMPORT_ERROR = ""
@@ -42,26 +42,8 @@ try:
 except Exception as e:
     PREVENT_IMPORT_ERROR = repr(e)
 
-# =========================================================
-# MOTOR PDF INTERNO
-# =========================================================
-PDF_ENGINE = "interno_sin_dependencias"
-PDF_IMPORT_ERROR = ""
-try:
-    from fpdf import FPDF
-    PDF_ENGINE_FPDF_AVAILABLE = True
-except Exception as e:
-    FPDF = None
-    PDF_ENGINE_FPDF_AVAILABLE = False
-    PDF_IMPORT_ERROR = repr(e)
-
-# =========================================================
-# MOTOR EXCEL
-# =========================================================
-EXCEL_ENGINE = "openpyxl"
-
-# Inicialización de Streamlit (Obligatorio como primera instrucción)
-st.set_page_config(page_title=APP_NAME, page_icon="𫠗", layout="wide", initial_sidebar_state="expanded")
+# Configuración inicial de Streamlit (Debe ser la primera instrucción)
+st.set_page_config(page_title=APP_NAME, page_icon="🫀", layout="wide", initial_sidebar_state="expanded")
 
 # =========================================================
 # INYECCIÓN DE ESTILOS CSS AVANZADOS
@@ -94,75 +76,4 @@ section[data-testid="stSidebar"] * { color:#111827 !important; }
 .user-bar {background:#0F172A; color:white !important; padding:10px 18px; border-radius:14px; margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; font-weight:800;}
 .rx-card {background:#FFFFFF; border:2px solid #0B4F8A; border-radius:18px; padding:18px 20px; margin-bottom:14px;}
 .rx-title {color:#0B4F8A !important; font-weight:900; font-size:1.1rem; margin-bottom:10px;}
-.rx-drug {background:#EFF6FF; border-left:5px solid #0B4F8A; padding:10px 14px; border-radius:10px; margin:6px 0; color:#0B4F8A !important; font-weight:800;}
-</style>
-"""
-st.markdown(css_styles, unsafe_allow_html=True)
-
-# =========================================================
-# UTILIDADES VISUALES CORREGIDAS
-# =========================================================
-def badge_html(texto: str, color: str = "blue") -> str:
-    # Corregido de forma segura sin cortes de línea en los strings
-    cls = {
-        "green": "badge-green",
-        "yellow": "badge-yellow",
-        "orange": "badge-orange",
-        "red": "badge-red",
-        "blue": "badge-blue",
-        "gray": "badge-gray"
-    }.get(color, "badge-blue")
-    return f'<span class="badge {cls}">{texto}</span>'
-
-def semaforo_item(nombre: str, valor, unidad: str, color: str, interpretacion: str, referencia: str):
-    if valor is None: valor_txt = "No calculado"
-    elif isinstance(valor, float): valor_txt = f"{valor:.2f} {unidad}"
-    else: valor_txt = f"{valor} {unidad}"
-    st.markdown(f'<div class="semaforo-card"><div class="semaforo-title">{nombre}</div><div class="semaforo-value">{valor_txt}</div>{badge_html(interpretacion, color)}<div class="semaforo-ref">Referencia: {referencia}</div></div>', unsafe_allow_html=True)
-
-# =========================================================
-# GESTIÓN DE USUARIOS Y AUTENTICACIÓN
-# =========================================================
-def _ensure_users_file():
-    if not USERS_FILE.exists(): USERS_FILE.write_text("{}", encoding="utf-8")
-
-def load_users() -> dict:
-    _ensure_users_file()
-    try: return json.loads(USERS_FILE.read_text(encoding="utf-8"))
-    except: return {}
-
-def save_users(users: dict):
-    USERS_FILE.write_text(json.dumps(users, indent=2, ensure_ascii=False), encoding="utf-8")
-
-def hash_password(password: str, salt: str) -> str:
-    return hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 120_000).hex()
-
-def register_user(username: str, password: str, nombre: str, matricula: str, especialidad: str, rol: str = "medico") -> Tuple[bool, str]:
-    username = (username or "").strip()
-    if not username or not password: return False, "Campos requeridos vacíos."
-    users = load_users()
-    if username in users: return False, "El usuario ya existe en el sistema."
-    salt = secrets.token_hex(16)
-    users[username] = {
-        "salt": salt, "password": hash_password(password, salt),
-        "nombre": nombre, "matricula": matricula, "especialidad": especialidad, "rol": rol
-    }
-    save_users(users)
-    return True, "Registro completado con éxito."
-
-def authenticate(username: str, password: str) -> Tuple[bool, Optional[dict]]:
-    users = load_users()
-    if username not in users: return False, None
-    u = users[username]
-    if hash_password(password, u["salt"]) == u["password"]: return True, u
-    return False, None
-
-if "admin" not in load_users():
-    register_user("admin", "admin1234", "Administrador Institucional", "9999", "Cardiología", "admin")
-
-def load_historial() -> dict:
-    if not HISTORIAL_FILE.exists(): return {}
-    try: return json.loads(HISTORIAL_FILE.read_text(encoding="utf-8"))
-    except: return {}
-
-def save
+.rx-drug {background:#EFF6FF; border-left:5px solid #0B4F8A; padding:10px 14px; border-radius:10
