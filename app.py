@@ -1,57 +1,83 @@
-def procesar_evaluacion_completa(p: Patient) -> Patient:
-    # 1. Ejecución robusta de pyprevent con purificación de datos (Ints y Floats)
-    if PREVENT_AVAILABLE:
-        try:
-            genero_py = "female" if str(p.sexo).strip().lower() in ["femenino", "female"] else "male"
-            
-            # Pasamos las variables forzando enteros puros
-            res = pyprevent.calculate_risk(
-                age=int(p.edad),
-                sex=genero_py,
-                sbp=int(round(p.presion_sistolica)),
-                bp_med=1 if p.tratamiento_hta else 0,
-                tot_chol=int(round(p.colesterol_total)),
-                hdl_chol=int(round(p.hdl)),
-                ldl_chol=int(round(p.ldl_actual)),
-                diabetes=1 if p.diabetes else 0,
-                smoker=1 if p.tabaquismo else 0,
-                egfr=float(p.egfr) if p.egfr else 75.0
-            )
-            
-            p.prevent_10 = round(res.get("10_yr_ascvd_risk", 0.0), 2) if res.get("10_yr_ascvd_risk") is not None else None
-            p.prevent_30 = round(res.get("30_yr_ascvd_risk", 0.0), 2) if res.get("30_yr_ascvd_risk") is not None else None
-            
-        except Exception as e:
-            print(f"Error pyprevent API: {e}")
-            p.prevent_10, p.prevent_30 = None, None
-    else:
-        p.prevent_10, p.prevent_30 = None, None
+from __future__ import annotations
+import streamlit as st
+import pandas as pd
+import io
+import os
+import json
+import hashlib
+import secrets
+import textwrap
+from dataclasses import dataclass
+from typing import Optional, Dict, List, Tuple
+from datetime import datetime
+from pathlib import Path
 
-    # 2. Calcular OPS Hearts
-    p.ops_hearts_riesgo = calcular_ops_hearts(p)
-    
-    # 3. Correlación y Criterio AHA 2026 para Guías de Dislipemia
-    if p.antecedente_infarto:
-        p.categoria_riesgo_final = "Prevención Secundaria (Extremo / Muy Alto)"
-        p.meta_ldl = "< 55 mg/dL"
-        txt_rx = "Evidencia Clase I. Estatinas de alta intensidad (Atorvastatina 40-80mg o Rosuvastatina 20-40mg) asociadas de ser necesario a Ezetimibe 10mg."
-    else:
-        score_riesgo = p.prevent_10 if p.prevent_10 is not None else 0.0
-        if score_riesgo >= 10.0 or p.ops_hearts_riesgo == "Alto / Muy Alto":
-            p.categoria_riesgo_final = "Riesgo Alto"
-            p.meta_ldl = "< 70 mg/dL"
-            txt_rx = "Indicación categórica de Estatinas de alta intensidad. Control lipídico institucional estricto a las 4-6 semanas."
-        elif 5.0 <= score_riesgo < 10.0 or p.ops_hearts_riesgo == "Moderado":
-            p.categoria_riesgo_final = "Riesgo Intermedio"
-            p.meta_ldl = "< 100 mg/dL"
-            txt_rx = "Iniciar estatinas de moderada intensidad. Discutir la presencia de factores potenciadores de riesgo cardiovascular."
-        else:
-            p.categoria_riesgo_final = "Riesgo Bajo"
-            p.meta_ldl = "< 116 mg/dL"
-            txt_rx = "Modificación del estilo de vida, dieta cardioprotectora (mediterránea) y ejercicio regular. Reevaluación anual."
-            
-    # BLINDAJE ANTI-PÁGINA EN BLANCO: Mapeamos el string a ambas variables posibles de la clase Patient
-    p.indicacion_tratamiento = txt_rx
-    p.indicacion_treatment = txt_rx
-            
-    return p
+# =========================================================
+# CONFIGURACIÓN GENERAL E INICIALIZACIÓN DE STREAMLIT
+# =========================================================
+APP_NAME = "LipidCare 2026 Pro"
+AUTOR_APP = "Ricardo Daniel Olano, Especialista en Cardiología y en Hipertensión Arterial"
+
+# CRUCIAL: st.set_page_config TIENE QUE SER LA PRIMERA INSTRUCCIÓN DE STREAMLIT
+st.set_page_config(page_title=APP_NAME, page_icon="🫀", layout="wide", initial_sidebar_state="expanded")
+
+DATA_DIR = Path(os.environ.get("LIPIDCARE_DATA_DIR", ".lipidcare_data"))
+DATA_DIR.mkdir(exist_ok=True)
+USERS_FILE = DATA_DIR / "users.json"
+HISTORIAL_FILE = DATA_DIR / "historial.json"
+
+# variables de entorno internas para evitar errores de renderizado lateral
+PDF_ENGINE = "interno_sin_dependencias"
+EXCEL_ENGINE = "openpyxl"
+EXCEL_IMPORT_ERROR = ""
+
+# =========================================================
+# MOTOR DE CÁLCULO PREVENT AUTOMATIZADO (SIN 'tc')
+# =========================================================
+PREVENT_AVAILABLE = False
+PREVENT_IMPORT_ERROR = ""
+try:
+    import pyprevent
+    PREVENT_AVAILABLE = True
+except Exception as e:
+    PREVENT_IMPORT_ERROR = repr(e)
+
+# =========================================================
+# INYECCIÓN DE ESTILOS CSS SEGUROS
+# =========================================================
+css_styles = """
+<style>
+html, body, [class*="css"] { color:#111827 !important; }
+.main {background:#F8FAFC;}
+.block-container {padding-top:1rem; padding-bottom:2rem;}
+section[data-testid="stSidebar"] { background:#F1F5F9 !important; color:#111827 !important; }
+section[data-testid="stSidebar"] * { color:#111827 !important; }
+.hero { background: linear-gradient(135deg,#0B4F8A 0%,#123C69 55%,#0F766E 100%); padding:28px 34px; border-radius:26px; color:white !important; box-shadow:0 14px 34px rgba(11,79,138,.25); margin-bottom:18px; }
+.hero h1 {font-size:2.35rem; margin:0 0 8px 0; font-weight:900; color:white !important;}
+.hero p {font-size:1rem; opacity:.96; margin:0; color:white !important;}
+.card {background:white; border-radius:22px; padding:20px 22px; box-shadow:0 8px 24px rgba(15,23,42,.07); border:1px solid #E5E7EB; margin-bottom:16px;}
+.badge {display:inline-block; padding:6px 11px; border-radius:999px; font-weight:800; font-size:.82rem; margin:2px 4px 2px 0;}
+.badge-green {background:#BBF7D0; color:#16A34A !important; border:1px solid #16A34A;}
+.badge-yellow {background:#FEF08A; color:#CA8A04 !important; border:1px solid #CA8A04;}
+.badge-orange {background:#FED7AA; color:#EA580C !important; border:1px solid #EA580C;}
+.badge-red {background:#FECACA; color:#DC2626 !important; border:1px solid #DC2626;}
+.badge-blue {background:#BFDBFE; color:#2563EB !important; border:1px solid #2563EB;}
+.badge-gray {background:#E5E7EB; color:#6B7280 !important; border:1px solid #6B7280;}
+.alert-red {border-left:6px solid #B91C1C; background:#FEF2F2; padding:14px 16px; border-radius:14px; margin-bottom:15px;}
+.alert-green {border-left:6px solid #0F766E; background:#ECFDF5; padding:14px 16px; border-radius:14px; margin-bottom:15px;}
+.alert-orange {border-left:6px solid #EA580C; background:#FFF7ED; padding:14px 16px; border-radius:14px; margin-bottom:15px;}
+.semaforo-card{background:#FFFFFF; border:1px solid #CBD5E1; border-radius:18px; padding:14px 15px; box-shadow:0 4px 14px rgba(15,23,42,.05); min-height:116px; margin-bottom:10px;}
+.semaforo-title{font-size:.88rem;color:#334155 !important;font-weight:800;margin-bottom:4px;}
+.semaforo-value{font-size:1.28rem;color:#111827 !important;font-weight:900;margin-bottom:6px;}
+.semaforo-ref{font-size:.78rem;color:#475569 !important;}
+.user-bar {background:#0F172A; color:white !important; padding:10px 18px; border-radius:14px; margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; font-weight:800;}
+.rx-card {background:#FFFFFF; border:2px solid #0B4F8A; border-radius:18px; padding:18px 20px; margin-bottom:14px;}
+.rx-title {color:#0B4F8A !important; font-weight:900; font-size:1.1rem; margin-bottom:10px;}
+.rx-drug {background:#EFF6FF; border-left:5px solid #0B4F8A; padding:10px 14px; border-radius:10px; margin:6px 0; color:#0B4F8A !important; font-weight:800;}
+</style>
+"""
+st.markdown(css_styles, unsafe_allow_html=True)
+
+# =========================================================
+# COMPONENTES VISUALES Y COMPONENTES REUSABLES
+# =================================
