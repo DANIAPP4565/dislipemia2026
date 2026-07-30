@@ -1,0 +1,17 @@
+LipidCare Precision 2026
+Build: 2026.07.29-LAB-IMPORT-MULTIFORMATO
+
+VALIDACIONES REALIZADAS
+- Compilación Python: APROBADA.
+- Parser de CSV largo: APROBADO.
+- Parser de Excel ancho: APROBADO.
+- Conversión colesterol mmol/L -> mg/dL: APROBADA.
+- Conversión triglicéridos mmol/L -> mg/dL: APROBADA.
+- Conversión creatinina µmol/L -> mg/dL: APROBADA.
+- Conversión UACR mg/mmol -> mg/g: APROBADA.
+- Conversión PCR-us mg/dL -> mg/L: APROBADA.
+- Lectura OCR con analito y resultado en líneas separadas: APROBADA.
+- Detección de valores antes o después del nombre del analito: APROBADA.
+- Control de conflictos entre archivos: IMPLEMENTADO.
+- Confirmación profesional previa a aplicar resultados: IMPLEMENTADA.
+- PREVENT permanece con autoverificación interna contra Tabla S25.
