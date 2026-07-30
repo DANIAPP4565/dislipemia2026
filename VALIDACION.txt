@@ -1,8 +1,0 @@
-LipidCare Precision 2026
-Validaciones realizadas al generar este paquete:
-- Compilación Python: aprobada.
-- Cobertura de coeficientes: 32 nombres de coeficientes y 32 transformaciones, sin campos faltantes.
-- Autoprueba PREVENT Tabla S25: error máximo 0,00000000 puntos porcentuales.
-- CVD total 10 años: 14,6839390956%.
-- ASCVD 10 años: 9,1950897536%.
-- Insuficiencia cardíaca 10 años: 8,0560967779%.
